@@ -1,0 +1,24 @@
+GazeFace
+Copyright 2026 The GazeFace Authors
+
+This product is a modified version of Project Gameface
+(https://github.com/google/project-gameface),
+Copyright 2023 Google LLC, licensed under the Apache License, Version 2.0.
+The full license text is in the LICENSE file.
+
+Modifications
+-------------
+The source files under src/, together with run_app.py, sentinel_main.py and
+build.spec, have been substantially modified from the Project Gameface
+originals, and many new files have been added. Original copyright headers
+are kept in the files that derive from Project Gameface.
+
+Third-party components
+----------------------
+- MediaPipe Face Landmarker model (assets/task/)
+  Copyright Google LLC. Apache License, Version 2.0.
+  https://github.com/google-ai-edge/mediapipe
+
+- IBM Plex fonts (assets/fonts/)
+  Copyright 2017 IBM Corp. with Reserved Font Name "Plex".
+  SIL Open Font License, Version 1.1. See assets/fonts/OFL.txt.
