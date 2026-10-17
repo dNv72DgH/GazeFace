@@ -23,7 +23,11 @@ It is built for people who find a mouse and keyboard hard or impossible to use, 
 
 ## Installation
 
-Download the latest version from [Releases](../../releases), extract it, and run `GazeFace.exe`. On first launch you are guided through a gaze calibration.
+Download `GazeFace-Setup-<version>.exe` from [Releases](../../releases) and run it. GazeFace is installed under `C:\Program Files\GazeFace` and can be started from the Start menu. On first launch you are guided through a gaze calibration.
+
+The installer is not code-signed yet, so Windows SmartScreen may warn you. Choose "More info" → "Run anyway" to continue.
+
+To uninstall, use Settings → Apps.
 
 ### Controlling elevated windows (optional)
 
