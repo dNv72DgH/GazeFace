@@ -61,6 +61,9 @@ class MainGui():
         from src import click_snap
         from src.gui import local_targets
         click_snap.set_local_provider(local_targets.provider(self.tk_root))
+        # Daily update check, and the release notes after an update.
+        from src import updater
+        updater.start(self.tk_root)
         # Restore the last on-screen position (saved on exit). Size is
         # fixed, so only the +x+y offset is remembered.
         self._restore_window_pos()

@@ -615,6 +615,22 @@ JA = {
     "%d / %d  (%d items)": "%d / %d  (%d 件)",
     "Sensitivity": "検出感度",
     "About GazeFace": "GazeFaceについて",
+    "GazeFace update": "GazeFace の更新",
+    "GazeFace %s is available.": "GazeFace %s があります。",
+    "While it updates, GazeFace closes for a moment and then starts again by itself.":
+        "更新中は GazeFace が一度終了し、終わると自動で起動します。",
+    "Update now": "今すぐ更新",
+    "Later": "後で",
+    "Preparing the update...": "更新を準備しています…",
+    "Downloading the update... %d%%": "更新をダウンロードしています… %d%%",
+    "Installing the update...": "更新をインストールしています…",
+    "No newer version was found.": "新しいバージョンは見つかりませんでした。",
+    "The update is installed. Restart GazeFace to use it.":
+        "更新をインストールしました。GazeFace を再起動すると使えます。",
+    "The update could not be started.": "更新を開始できませんでした。",
+    "The update failed.": "更新に失敗しました。",
+    "What's new in GazeFace %s": "GazeFace %s の更新内容",
+    "GazeFace has been updated to %s.": "GazeFace を %s に更新しました。",
     "Suppresses chattering, where a click or other input is entered several times in a row without you meaning it. Recommended on.":
         "クリックなどの入力が意図せず連続して入力されてしまうチャタリングを抑制します。オン推奨。",
     "When an error occurs in the app, it tries to restart itself automatically so you are not left unable to operate it. If the settings are broken, it restarts with an earlier backup profile. Normally there is no need to change this setting.":

@@ -64,6 +64,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#DistDir}\GazeFace\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Updater: an elevated scheduled task the app can start without a UAC
+; prompt, which the standard edition could not operate (updater\*.ps1).
+Source: "updater\gazeface_update.ps1"; DestDir: "{app}\updater"; Flags: ignoreversion
+Source: "updater\register_task.ps1"; DestDir: "{app}\updater"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\GazeFace"; Filename: "{app}\GazeFace.exe"
@@ -85,9 +89,13 @@ Root: HKLM64; Subkey: "{#AtKey}"; ValueType: dword; ValueName: "TerminateOnDeskt
 Root: HKLM64; Subkey: "{#AtKey}"; ValueType: dword; ValueName: "CopySettingsToLockedDesktop"; ValueData: 0
 
 [Run]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\updater\register_task.ps1"""; Flags: runhidden waituntilterminated
 ; runasoriginaluser: without it GazeFace would start elevated and behave
 ; differently.
 Filename: "{app}\GazeFace.exe"; Description: "{cm:LaunchApp}"; Flags: postinstall nowait skipifsilent runasoriginaluser
+
+[UninstallRun]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\updater\register_task.ps1"" -Remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveUpdateTask"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
