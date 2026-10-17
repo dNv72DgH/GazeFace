@@ -47,6 +47,8 @@ app = Analysis(
     binaries=[],
     datas=[(mp_modules.as_posix(), 'mediapipe/modules'),
                     ('assets','assets'),
+                    # Shown from Advanced > About GazeFace.
+                    ('LICENSE', '.'), ('NOTICE', '.'),
                     # Factory defaults only. NOT the repo's configs/ tree:
                     # that is the build machine's own live data (tweaked
                     # profiles, the launcher icon cache keyed to apps

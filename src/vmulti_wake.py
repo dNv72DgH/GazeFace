@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Show a pointer Windows is hiding, with one report from the vmulti
-virtual mouse. That is ALL this module does.
+"""Show a pointer Windows is hiding, with one report from a virtual
+mouse (GazeFace's own UMDF driver, or vmulti). That is ALL this module
+does.
 
 After sign-in Windows keeps the pointer suppressed (CURSOR_SUPPRESSED)
 until a mouse moves, and it does not count SendInput as a mouse moving:
@@ -31,11 +32,16 @@ Deliberately narrow (the user's condition for using the driver at all):
   * no driver, or any failure: nothing happens, and the caller carries
     on exactly as before.
 
-Protocol (vmulti client, xaviersykora/vmulti-win11): WriteFile of a
-0x41-byte buffer to the control collection (VID 0x00FF PID 0xBACC,
-usage page 0xFF00 usage 1): [0]=0x40 control report, [1]=7 payload
-length, [2]=0x03 mouse report, [3]=buttons, [4:6] X, [6:8] Y (both
-0..0x7FFF over the whole virtual desktop, little-endian), [8]=wheel.
+Devices, both found by their control collection (usage page 0xFF00
+usage 1); X and Y are 0..0x7FFF over the whole virtual desktop,
+little-endian:
+  * gfmouse (driver/gfmouse, UMDF - preferred; VID 0x1209 PID 0x0007):
+    WriteFile of 5 bytes: [0]=0x02, [1:3] X, [3:5] Y. The driver has no
+    way to press a button.
+  * vmulti (xaviersykora/vmulti-win11, kernel; VID 0x00FF PID 0xBACC):
+    WriteFile of 0x41 bytes: [0]=0x40 control report, [1]=7 payload
+    length, [2]=0x03 mouse report, [3]=buttons, [4:6] X, [6:8] Y,
+    [8]=wheel.
 """
 
 import ctypes
@@ -45,11 +51,12 @@ from ctypes import wintypes
 
 logger = logging.getLogger("VMultiWake")
 
-VMULTI_VID = 0x00FF
-VMULTI_PID = 0xBACC
+GFMOUSE = "gfmouse"
+VMULTI = "vmulti"
+# kind -> (VID, PID), in order of preference
+DEVICES = {GFMOUSE: (0x1209, 0x0007), VMULTI: (0x00FF, 0xBACC)}
 CONTROL_USAGE_PAGE = 0xFF00
 CONTROL_USAGE = 0x0001
-REPORT_SIZE = 0x41
 ABS_MAX = 0x7FFF
 
 _GENERIC_RW = 0x80000000 | 0x40000000
@@ -157,27 +164,33 @@ _u32.EnumDisplaySettingsW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
 _absent = False           # driver looked for and not found: stop looking
 
 
-def _is_control(h):
+def _control_kind(h):
+    """The DEVICES kind if `h` is a control collection, else None."""
     attrs = _HIDD_ATTRIBUTES()
     attrs.Size = ctypes.sizeof(attrs)
     if not _hid.HidD_GetAttributes(h, ctypes.byref(attrs)):
-        return False
-    if attrs.VendorID != VMULTI_VID or attrs.ProductID != VMULTI_PID:
-        return False
+        return None
+    kind = next((k for k, ids in DEVICES.items()
+                 if ids == (attrs.VendorID, attrs.ProductID)), None)
+    if kind is None:
+        return None
     ppd = ctypes.c_void_p()
     if not _hid.HidD_GetPreparsedData(h, ctypes.byref(ppd)):
-        return False
+        return None
     try:
         caps = _HIDP_CAPS()
         if _hid.HidP_GetCaps(ppd, ctypes.byref(caps)) == 0:
-            return False
-        return (caps.UsagePage == CONTROL_USAGE_PAGE
-                and caps.Usage == CONTROL_USAGE)
+            return None
+        if (caps.UsagePage == CONTROL_USAGE_PAGE
+                and caps.Usage == CONTROL_USAGE):
+            return kind
+        return None
     finally:
         _hid.HidD_FreePreparsedData(ppd)
 
 
 def _open_control():
+    """(handle, kind) of the preferred device present, or None."""
     guid = _GUID()
     _hid.HidD_GetHidGuid(ctypes.byref(guid))
     devs = _setup.SetupDiGetClassDevsW(
@@ -185,6 +198,7 @@ def _open_control():
         _DIGCF_PRESENT | _DIGCF_DEVICEINTERFACE)
     if devs == _INVALID_HANDLE:
         return None
+    found = {}                                  # kind -> handle
     try:
         iface = _SP_DEVICE_INTERFACE_DATA()
         iface.cbSize = ctypes.sizeof(iface)
@@ -210,12 +224,20 @@ def _open_control():
                                  _OPEN_EXISTING, 0x80, None)
             if not h or h == _INVALID_HANDLE:
                 continue
-            if _is_control(h):
-                return h
-            _k32.CloseHandle(h)
-        return None
+            kind = _control_kind(h)
+            if kind is None or kind in found:
+                _k32.CloseHandle(h)
+                continue
+            found[kind] = h
+            if kind == GFMOUSE:
+                break                           # the preferred one
     finally:
         _setup.SetupDiDestroyDeviceInfoList(devs)
+    chosen = next((k for k in DEVICES if k in found), None)
+    for k, h in found.items():
+        if k != chosen:
+            _k32.CloseHandle(h)
+    return (found[chosen], chosen) if chosen else None
 
 
 def _virtual_bounds():
@@ -256,14 +278,19 @@ def _to_abs(x, y, b):
             max(0, min(ABS_MAX, int(round((y - vt) * ABS_MAX / (vh - 1))))))
 
 
-def _report(h, ax, ay):
-    buf = (ctypes.c_ubyte * REPORT_SIZE)()
-    buf[0], buf[1], buf[2] = 0x40, 7, 0x03      # control, len, mouse
-    buf[3] = 0                                  # no buttons, ever
-    buf[4], buf[5] = ax & 0xFF, (ax >> 8) & 0xFF
-    buf[6], buf[7] = ay & 0xFF, (ay >> 8) & 0xFF
+def _report_bytes(kind, ax, ay):
+    pos = bytes((ax & 0xFF, (ax >> 8) & 0xFF, ay & 0xFF, (ay >> 8) & 0xFF))
+    if kind == GFMOUSE:
+        return b"\x02" + pos
+    # vmulti: control, payload length, mouse report, no buttons, ever
+    return (b"\x40\x07\x03\x00" + pos).ljust(0x41, b"\x00")
+
+
+def _report(h, kind, ax, ay):
+    data = _report_bytes(kind, ax, ay)
+    buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
     written = wintypes.DWORD()
-    return bool(_k32.WriteFile(h, buf, REPORT_SIZE, ctypes.byref(written),
+    return bool(_k32.WriteFile(h, buf, len(data), ctypes.byref(written),
                                None))
 
 
@@ -273,14 +300,15 @@ def wake_pointer() -> bool:
     if _absent:
         return False
     try:
-        h = _open_control()
+        opened = _open_control()
     except Exception as e:
-        logger.warning("vmulti lookup failed: %s", e)
+        logger.warning("virtual mouse lookup failed: %s", e)
         return False
-    if h is None:
+    if opened is None:
         _absent = True
-        logger.info("vmulti not installed - pointer wake unavailable")
+        logger.info("no virtual mouse installed - pointer wake unavailable")
         return False
+    h, kind = opened
     # Cursor position and display sizes must be in the same (physical)
     # pixels as the absolute range. In a DPI-unaware thread they are not,
     # and the "back to where it was" report put the pointer a third of
@@ -300,15 +328,15 @@ def wake_pointer() -> bool:
         # One absolute unit is often less than a pixel; step a whole pixel
         # inward so it is a real move even at the desktop's right edge.
         step = 1 if x + 1 < b[0] + b[2] else -1
-        ok = _report(h, *_to_abs(x + step, y, b))
+        ok = _report(h, kind, *_to_abs(x + step, y, b))
         time.sleep(0.015)
-        ok = _report(h, *_to_abs(x, y, b)) and ok
-        logger.info("vmulti pointer wake at %d,%d: %s", x, y,
+        ok = _report(h, kind, *_to_abs(x, y, b)) and ok
+        logger.info("%s pointer wake at %d,%d: %s", kind, x, y,
                     "sent" if ok else "WriteFile failed (%d)"
                     % ctypes.get_last_error())
         return ok
     except Exception as e:
-        logger.warning("vmulti pointer wake failed: %s", e)
+        logger.warning("%s pointer wake failed: %s", kind, e)
         return False
     finally:
         _k32.CloseHandle(h)

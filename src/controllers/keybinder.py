@@ -207,6 +207,9 @@ class Keybinder(metaclass=Singleton):
         # baseline). Freeze engages on a rising spike and holds until the
         # value returns to baseline (or FREEZE_MAX_HOLD_S elapses).
         self._freeze_state = {}
+        # Disable on strong reaction: gesture -> time.time() it is off
+        # until.
+        self._strong_off_until = {}
 
     def start(self):
         if not self.is_started:
@@ -943,6 +946,43 @@ class Keybinder(metaclass=Singleton):
                     block_priority = p
         return block_priority
 
+    def _update_strong_off(self, g_info, cfg) -> set:
+        """Disable on strong reaction. Returns the gestures that are off.
+
+        A gesture with the option on whose value reaches its strong level
+        (a sudden laugh, say) is turned off for its disabled time. The
+        level is relative to the gesture's own threshold: sensitivity 1 =
+        threshold x 1.05, each step +0.05 (100 = x 6.0). The time restarts
+        on every frame the value is still that high, so it counts from
+        the moment the reaction ends.
+        """
+        enabled = cfg.get("gesture_strong_off_enabled", {}) or {}
+        sens = cfg.get("gesture_strong_off_sens", {}) or {}
+        secs = cfg.get("gesture_strong_off_secs", {}) or {}
+        now = time.time()
+        off = set()
+        for shape_name, info in g_info.items():
+            if not enabled.get(shape_name, False):
+                self._strong_off_until.pop(shape_name, None)
+                continue
+            try:
+                s = max(1, min(100, int(sens.get(shape_name, 20))))
+                hold = max(1, min(120, int(secs.get(shape_name, 2))))
+            except (TypeError, ValueError):
+                continue
+            level = info["thres"] * (1.05 + (s - 1) * 0.05)
+            until = self._strong_off_until.get(shape_name, 0.0)
+            if info["val"] >= level:
+                if now >= until:
+                    logger.info("Strong reaction on %s (%.2f >= %.2f): "
+                                "off for %d s", shape_name, info["val"],
+                                level, hold)
+                until = now + hold
+                self._strong_off_until[shape_name] = until
+            if now < until:
+                off.add(shape_name)
+        return off
+
     def act(self, blendshape_values) -> dict:
         """Trigger devices action base on blendshape values
 
@@ -998,6 +1038,9 @@ class Keybinder(metaclass=Singleton):
         block_priority = self._compute_block_priority(g_info, cfg)
         priority_map = cfg.get("gesture_priority", {}) or {}
 
+        # --- Disable on strong reaction: that gesture off for a while. ---
+        strong_off = self._update_strong_off(g_info, cfg)
+
         # Update prev-values for next frame now that the pre-pass is done.
         for shape_name, info in g_info.items():
             self._prev_gesture_val[shape_name] = info["val"]
@@ -1007,8 +1050,10 @@ class Keybinder(metaclass=Singleton):
         # top-to-bottom row order (by action), NOT the arbitrary order the
         # gestures happened to be bound in — otherwise the meters reshuffle
         # whenever a binding is added ("並び順が勝手に変わる").
-        action_order = {a: i for i, a in enumerate(
-            shape_list.available_actions_keys)}
+        # Keyed by action id ("left", "pointer_jump") - what a binding
+        # holds in v[1] - not by the page's display labels.
+        action_order = {v[1]: i for i, v in enumerate(
+            shape_list.available_actions_values)}
         slider_max = cfg.get("gesture_slider_max", {}) or {}
         slider_min = cfg.get("gesture_slider_min", {}) or {}
         snap = []
@@ -1016,9 +1061,9 @@ class Keybinder(metaclass=Singleton):
             info = g_info.get(shape_name)
             if info is None:
                 continue
-            suppressed = (block_priority is not None and
-                          float(priority_map.get(shape_name, 0))
-                          < block_priority)
+            suppressed = shape_name in strong_off or (
+                block_priority is not None and
+                float(priority_map.get(shape_name, 0)) < block_priority)
             # Per-gesture meter full-scale (threshold units) = the slider
             # ceiling / 1000; default 5.0. The sub-monitor bar uses it so
             # its deflection matches the rescaled threshold slider.
@@ -1041,6 +1086,12 @@ class Keybinder(metaclass=Singleton):
         snap.sort(key=lambda s: action_order.get(s[1], len(action_order)))
         self.monitor_snapshot = snap
         self.monitor_ts = time.time()
+
+        # A gesture that is off reads as 0 from here on (after the meters,
+        # which still show the real value): no new presses, and anything
+        # it holds is released through the normal falling edge.
+        for shape_name in strong_off:
+            g_info[shape_name]["val"] = 0.0
 
         # Gaze-app mode: while a gaze grid (launcher / clipboard / task
         # switcher) is open, ONLY its local gesture map drives it;

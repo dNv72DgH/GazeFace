@@ -17,11 +17,11 @@ Window {
     property var cells: []            // [{title, icon, app}]
     property int sel: 0               // selected linear index (grid)
     property string accent: "#4CC2FF" // Win11 accent
-    property color cellColor: "#202124"  // shared: tile ("mount") base
-    property color hlColor: "#2A3A22"    // shared: app-cell highlight
-    property color arrowColor: "#F6F4F0"    // gaze-move: the 8 arrows
-    property color centerColor: "#F6F4F0"   // gaze-move: centre ring
-    property color pointerColor: "#F6F4F0"  // gaze-move: cursor-follow ring
+    property color cellColor: "#202228"  // shared: tile ("mount") base
+    property color hlColor: "#382E1F"    // shared: app-cell highlight
+    property color arrowColor: "#CFC5AF"    // gaze-move: the 8 arrows
+    property color centerColor: "#CFC5AF"   // gaze-move: centre ring
+    property color pointerColor: "#CFC5AF"  // gaze-move: cursor-follow ring
     property string arrowDir: ""      // focused compass dir ("" = centre)
     property real ringX: 0            // cursor-ring centre (ring mode)
     property real ringY: 0
@@ -29,12 +29,19 @@ Window {
     property real jumpY: 0
     property int jumpTick: 0          // bump to (re)play the landing ripple
     // Landing colours; a jump that snapped onto a clickable thing comes in
-    // orange (development aid, see mouse_controller.SNAP_DEBUG_COLOUR).
+    // light orange (the "Visual cue" option, see
+    // mouse_controller.SNAP_NOTIFY_COLOUR).
     property color jumpRingColor: "#FFFFFF"
     property color jumpDotColor: "#80868B"
     // Content fade (the acrylic backdrop is a native effect and appears
     // instantly; the foreground fades in/out over it). Driven from Python.
     property real contentOpacity: 0
+    // Grid notice: flash one cell and show a short message (e.g. the
+    // clipboard's "Added to pinned"). Bump noticeTick to play it.
+    property int noticeCell: -1
+    property string noticeText: ""
+    property color noticeColor: "#D9622B"
+    property int noticeTick: 0
 
     signal escPressed()
 
@@ -134,11 +141,76 @@ Window {
                     }
                 }
             }
+
+            // Notice flash: the cell glows in the notice colour and a ring
+            // swells off it, fading out.
+            Rectangle {
+                id: noticeFlash
+                property real p: 1
+                visible: win.noticeCell >= 0 && p < 1
+                x: win.cellX(Math.max(0, win.noticeCell))
+                y: win.cellY(Math.max(0, win.noticeCell))
+                width: win.cellW; height: win.cellH
+                radius: Math.round(Math.min(width, height) * 0.10)
+                z: 5
+                transformOrigin: Item.Center
+                scale: 1.0 + 0.14 * p
+                opacity: 1 - p
+                color: Qt.rgba(win.noticeColor.r, win.noticeColor.g,
+                               win.noticeColor.b, 0.45)
+                border.width: Math.max(4, Math.round(16 * (1 - p)))
+                border.color: win.noticeColor
+                antialiasing: true
+                NumberAnimation on p {
+                    id: noticeFlashAnim
+                    running: false
+                    from: 0; to: 1; duration: 750; easing.type: Easing.OutCubic
+                }
+            }
+        }
+
+        // Notice message: a pill in the top margin, in for ~2 s.
+        Rectangle {
+            id: noticeToast
+            visible: win.mode === "grid" && opacity > 0
+            opacity: 0
+            z: 10
+            height: Math.max(40, Math.round(win.marginY * 0.66))
+            width: noticeLabel.implicitWidth + height * 1.2
+            radius: height / 2
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: Math.round((win.marginY - height) / 2)
+            color: "#E6202124"
+            border.width: 3
+            border.color: win.noticeColor
+            Text {
+                id: noticeLabel
+                anchors.centerIn: parent
+                text: win.noticeText
+                color: "#F3F3F3"
+                font.family: "Segoe UI Variable Display"
+                font.pixelSize: Math.round(parent.height * 0.46)
+                font.bold: true
+            }
+            SequentialAnimation {
+                id: noticeToastAnim
+                NumberAnimation { target: noticeToast; property: "opacity"; to: 1; duration: 150 }
+                PauseAnimation { duration: 1700 }
+                NumberAnimation { target: noticeToast; property: "opacity"; to: 0; duration: 400 }
+            }
+        }
+
+        Connections {
+            target: win
+            function onNoticeTickChanged() {
+                noticeFlashAnim.restart()
+                noticeToastAnim.restart()
+            }
         }
 
         // ============================ ARROWS =========================== //
         // Gaze move: 8 compass arrows + a centre ring target. Drawn in QML
-        // (NOT PNG images) so the off-white fill (#F6F4F0) is applied
+        // (NOT PNG images) so the arrow colour (arrowColor) is applied
         // directly — the colorized PNGs were rendering grey. The arrow you
         // look toward is enlarged + fully opaque; the rest sit dimmer.
         Item {
@@ -312,8 +384,8 @@ Window {
 
     // ============================== RING =============================== //
     // Cursor-follow ring during the glide (outside the fading content so it
-    // stays crisp while the move runs). FacePilot palette: same off-white
-    // (#F6F4F0) as the arrows / centre target.
+    // stays crisp while the move runs), in pointerColor - by default the
+    // same colour as the arrows / centre target.
     Item {
         anchors.fill: parent
         visible: win.mode === "ring"

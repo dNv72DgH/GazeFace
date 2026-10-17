@@ -10,6 +10,7 @@
 #    "accent":"#RRGGBB","gradient":<int ABGR>}
 #   {"cmd":"cells","rows":R,"cols":C,"cells":[...],"sel":i}   # paging
 #   {"cmd":"highlight","sel":i}
+#   {"cmd":"notice","cell":i,"text":s,"color":"#RRGGBB"}  # flash + message
 #   {"cmd":"close"}                                            # hide
 #   {"cmd":"quit"}                                             # exit process
 import json
@@ -705,6 +706,13 @@ class Overlay:
             self._fade_out()
         elif cmd == "jump":
             self._do_jump(msg)
+        elif cmd == "notice":
+            self.win.setProperty("noticeCell", int(msg.get("cell", -1)))
+            self.win.setProperty("noticeText", str(msg.get("text", "")))
+            if msg.get("color"):
+                self.win.setProperty("noticeColor", str(msg["color"]))
+            self.win.setProperty(
+                "noticeTick", int(self.win.property("noticeTick") or 0) + 1)
         elif cmd == "close":
             self._ring_stop()
             self._fade_out()
@@ -1043,9 +1051,17 @@ class Overlay:
             self._hide_timer.stop()
         t = QTimer()
         t.setSingleShot(True)
-        t.timeout.connect(self._hidden_now)
+        t.timeout.connect(self._jump_done)
         t.start(720)
         self._hide_timer = t
+
+    def _jump_done(self):
+        # The ripple is over and the window hides: nothing is on screen
+        # any more. Left True, a display change seen meanwhile would keep
+        # waiting for a "next hide" (see _topology_settled) that already
+        # happened.
+        self._want_visible = False
+        self._hidden_now()
 
     def _ring_start(self):
         self._ring_on = True

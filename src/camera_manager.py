@@ -756,7 +756,21 @@ class ThreadCameras():
                         # wanted. Recover/report, never restart.
                         starved = (fps <= 0.0 or now - self.last_frame_unix_ts
                                    > STALE_FRAME_RECOVER_S)
-                        if starved:
+                        # Only an OPEN camera that sends nothing earns a
+                        # restart here. No capture at all (unplugged, or
+                        # another app holds it) is the reopen path's call,
+                        # with its own REOPEN_FAILS_BEFORE_RESTART budget;
+                        # restarting ~30 s after an unplug fixes nothing
+                        # and spends the restart-loop allowance.
+                        cam_open = bool(self.caps) and (
+                            self.caps.get(self.curr_id) is not None)
+                        if starved and not cam_open:
+                            logger.warning(
+                                "Camera not open (%.1f fps) — left to the "
+                                "reopen path, not restarting", fps)
+                            app_status.set_error("Camera error",
+                                                 "Recovering")
+                        elif starved:
                             restart.request_restart(
                                 "camera delivering no frames (%.1f fps, "
                                 "last frame %.1fs ago)"

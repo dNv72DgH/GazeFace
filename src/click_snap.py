@@ -58,6 +58,11 @@ _CLICKABLE_TYPES = frozenset((
     50031,   # SplitButton
 ))
 _PROP_INVOKE_AVAILABLE = 30031    # UIA_IsInvokePatternAvailablePropertyId
+# Web content (Chromium-based browsers report "Chrome", Firefox "Gecko").
+_WEB_FRAMEWORKS = frozenset(("Chrome", "Gecko"))
+# Row-like types that are targets in desktop apps (desktop icons, Explorer
+# rows) but on a web page are mostly plain <li> / table rows.
+_ROW_TYPES = frozenset((50007, 50024, 50029))  # ListItem, TreeItem, DataItem
 _ANCESTOR_LEVELS = 4              # text run -> link -> list item ...
 # An element covering more than this share of the screen is a panel or a
 # document, not a target: snapping to its centre would be a jump away.
@@ -166,20 +171,50 @@ def _clickable(el):
     window said Invoke=True), and treating those as targets made a
     magnifier pull the jump away from a real button. In-page clickable
     elements (a browser's clickable <div>) have no window of their own.
+
+    Web pages need a stricter rule, measured on a shopping page where
+    snaps kept landing on things that do nothing when clicked:
+      * <li> list items come through as ListItem (61 of them there: point
+        balances, labels) - only a row that takes keyboard focus or
+        offers Invoke is a target;
+      * Chromium offers Invoke on any element with a JavaScript click
+        listener, and pages attach those to plain blocks for analytics
+        (58 nameless Groups there) - on the web, Invoke alone is not
+        enough: the element must also take keyboard focus, as real
+        links, buttons and controls do.
     """
     try:
-        if el.CurrentControlType in _CLICKABLE_TYPES:
+        ct = el.CurrentControlType
+        web = el.CurrentFrameworkId in _WEB_FRAMEWORKS
+        if ct in _CLICKABLE_TYPES:
+            if web and ct in _ROW_TYPES:
+                return bool(el.CurrentIsKeyboardFocusable or
+                            el.GetCurrentPropertyValue(
+                                _PROP_INVOKE_AVAILABLE))
             return True
         if not el.GetCurrentPropertyValue(_PROP_INVOKE_AVAILABLE):
             return False
-        return not el.CurrentNativeWindowHandle
+        if el.CurrentNativeWindowHandle:
+            return False
+        return bool(el.CurrentIsKeyboardFocusable) if web else True
     except Exception:
         return False
 
 
+def _describe(el):
+    """Short "framework type 'name'" for the log: what a snap landed on."""
+    try:
+        name = (el.CurrentName or "").replace("\n", " ")[:30]
+        return "%s %s '%s'" % (el.CurrentFrameworkId or "?",
+                               el.CurrentLocalizedControlType or
+                               el.CurrentControlType, name)
+    except Exception:
+        return "?"
+
+
 def _search(uia, walker, tx, ty, radius, screen_area, deadline):
     from ctypes import wintypes
-    best = None                       # (distance, area, rect)
+    best = None                       # (distance, area, rect, what)
     seen = set()
     for px, py in _sample_points(tx, ty, radius):
         if time.monotonic() > deadline:
@@ -221,7 +256,44 @@ def _search(uia, walker, tx, ty, radius, screen_area, deadline):
         d = _rect_distance(tx, ty, rect)
         if d > radius:
             continue
-        cand = (d, w * h, rect)
+        cand = (d, w * h, rect, _describe(el))
+        if best is None or cand[:2] < best[:2]:
+            best = cand
+    return best
+
+
+# GazeFace's own window: its buttons are drawn by Tk (CustomTkinter paints
+# them on a canvas), so UI Automation sees one plain pane and offers
+# nothing to snap to. The app registers a provider that lists the screen
+# rectangles of its visible clickable widgets instead (see
+# src/gui/local_targets.py).
+_local_provider = None
+
+
+def set_local_provider(fn):
+    """fn() -> [(left, top, right, bottom), ...] in screen pixels."""
+    global _local_provider
+    _local_provider = fn
+
+
+def _local_best(tx, ty, radius, screen_area):
+    fn = _local_provider
+    if fn is None:
+        return None
+    try:
+        rects = fn() or []
+    except Exception as e:
+        logger.debug("local targets failed: %s", e)
+        return None
+    best = None
+    for rect in rects:
+        w, h = rect[2] - rect[0], rect[3] - rect[1]
+        if w <= 0 or h <= 0 or w * h > _MAX_AREA_FRAC * screen_area:
+            continue
+        d = _rect_distance(tx, ty, rect)
+        if d > radius:
+            continue
+        cand = (d, w * h, tuple(rect), "GazeFace widget")
         if best is None or cand[:2] < best[:2]:
             best = cand
     return best
@@ -239,18 +311,22 @@ def find(tx, ty, radius, screen_w, screen_h, budget_s=0.35):
         return _search(uia, walker, tx, ty, radius, area, deadline)
 
     out = _get_worker().submit(job)
+    # GazeFace's own widgets, collected while UIA searches the rest.
+    local = _local_best(tx, ty, radius, area)
     try:
         # A little past the budget: the last UIA call may still be out.
         best = out.get(timeout=budget_s + 0.25)
     except queue.Empty:
-        logger.info("click snap: no answer in time - keeping the jump")
-        return None
+        logger.info("click snap: no answer in time")
+        best = None
+    if local is not None and (best is None or local[:2] < best[:2]):
+        best = local
     ms = (time.monotonic() - t0) * 1000
     if best is None:
         logger.info("click snap: nothing clickable within %d px (%.0f ms)",
                     radius, ms)
         return None
-    d, _area, (l, t, r, b) = best
+    d, _area, (l, t, r, b), what = best
     w, h = r - l, b - t
     small = max(_SMALL_PX, 2 * radius)
     if w <= small and h <= small:
@@ -258,6 +334,6 @@ def find(tx, ty, radius, screen_w, screen_h, budget_s=0.35):
     else:                                           # big: just inside it
         x = min(max(tx, l + _INSET), r - _INSET)
         y = min(max(ty, t + _INSET), b - _INSET)
-    logger.info("click snap: %d,%d -> %d,%d (target %dx%d, %.0f px off, "
-                "%.0f ms)", tx, ty, x, y, w, h, d, ms)
+    logger.info("click snap: %d,%d -> %d,%d (%s, %dx%d, %.0f px off, "
+                "%.0f ms)", tx, ty, x, y, what, w, h, d, ms)
     return int(x), int(y)

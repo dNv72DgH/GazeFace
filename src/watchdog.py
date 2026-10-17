@@ -38,6 +38,21 @@ from src.singleton_meta import Singleton
 logger = logging.getLogger("Watchdog")
 
 
+def _awake_s():
+    """Seconds the machine has been awake: QueryUnbiasedInterruptTime,
+    which - unlike the other clocks - does not advance during sleep or
+    hibernation. None if unavailable."""
+    try:
+        import ctypes
+        t = ctypes.c_ulonglong()
+        if ctypes.windll.kernel32.QueryUnbiasedInterruptTime(
+                ctypes.byref(t)):
+            return t.value / 1e7            # 100 ns units
+    except Exception:
+        pass
+    return None
+
+
 class Watchdog(metaclass=Singleton):
 
     TICK_S = 2.0
@@ -114,6 +129,7 @@ class Watchdog(metaclass=Singleton):
 
     def _loop(self):
         last, last_wall = time.monotonic(), time.time()
+        last_awake = _awake_s()
         while not self._stop.is_set():
             # The clocks keep running across a suspend, so the first tick
             # after one sees minutes since the last tk beat and since the
@@ -122,15 +138,31 @@ class Watchdog(metaclass=Singleton):
             # schedule and start every measurement over from here. Both
             # clocks: the stall age is monotonic, the camera age is wall
             # time, and only the wall clock is certain to include a sleep.
+            #
+            # A gap is only a suspend if the machine was actually asleep:
+            # the awake clock (_awake_s) stops during sleep, so it stays
+            # small across one. When it ran through the gap too, this
+            # thread was merely starved - e.g. the main thread holding the
+            # GIL in a long call - and that is the very stall the checks
+            # below exist to catch, so the measurements are kept.
             now, now_wall = time.monotonic(), time.time()
+            awake = _awake_s()
             gap = max(now - last, now_wall - last_wall)
+            awake_gap = (awake - last_awake
+                         if awake is not None and last_awake is not None
+                         else None)
             if gap > self.SUSPEND_GAP_S:
-                logger.info("Watchdog: %.0f s since the last tick - "
-                            "resumed from a suspend, restarting "
-                            "measurements", gap)
-                self._resumed_at = now
-                self._reset_state()
-            last, last_wall = now, now_wall
+                if awake_gap is not None and awake_gap > self.SUSPEND_GAP_S:
+                    logger.warning("Watchdog: %.0f s since the last tick "
+                                   "with the machine awake - this thread "
+                                   "was starved, not suspended", gap)
+                else:
+                    logger.info("Watchdog: %.0f s since the last tick - "
+                                "resumed from a suspend, restarting "
+                                "measurements", gap)
+                    self._resumed_at = now
+                    self._reset_state()
+            last, last_wall, last_awake = now, now_wall, awake
             try:
                 self._tick()
             except Exception as e:

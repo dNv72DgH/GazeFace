@@ -149,3 +149,5 @@ build/
 # Local tools / editor state
 .claude/
 icon/
+# Installer build output
+installer/Output/

@@ -350,14 +350,25 @@ def _set_cursor_absolute(x: int, y: int, screen_w: int, screen_h: int) -> None:
 # responsive without reintroducing jitter. Lower window / higher K = more
 # responsive and jumpier; higher window / lower K = smoother and laggier.
 GAZE_SMOOTH_WINDOW = 5
+GAZE_EMA_K = 0.4
+
 # Gaze Jump snap-to-clickable range (px), when the option is on.
 SNAP_RADIUS_DEFAULT = 120
-# Development aid: a jump that snapped onto a clickable thing plays its
-# landing animation in this colour instead of white / grey, so the snap
-# can be told apart from a plain jump at a glance. Config key
-# "pointer_jump_snap_debug_color" (default on) turns it off.
-SNAP_DEBUG_COLOUR = "#FF8C1A"
-GAZE_EMA_K = 0.4
+# A jump that snapped onto a clickable thing plays its landing animation
+# in light orange (the development-time #FF8C1A, a little lighter) instead
+# of white / grey, so the user can tell it landed on something (the
+# "Visual cue" option).
+SNAP_NOTIFY_COLOUR = "#FFA348"
+SNAP_NOTIFY_KEY = "pointer_jump_snap_notify"
+# Its development-time predecessor, still honoured until the new option
+# has been set once.
+SNAP_NOTIFY_OLD_KEY = "pointer_jump_snap_debug_color"
+
+
+def snap_notify_enabled(cfg) -> bool:
+    if SNAP_NOTIFY_KEY in cfg:
+        return bool(cfg[SNAP_NOTIFY_KEY])
+    return bool(cfg.get(SNAP_NOTIFY_OLD_KEY, True))
 
 
 class MouseController(metaclass=Singleton):
@@ -965,9 +976,9 @@ class MouseController(metaclass=Singleton):
                 return
         except Exception:
             pass
-        # Orange for a jump that snapped onto a clickable thing (dev aid).
-        orange = snapped and bool((ConfigManager().config or {}).get(
-            "pointer_jump_snap_debug_color", True))
+        # Light orange for a jump that snapped onto a clickable thing.
+        orange = snapped and snap_notify_enabled(
+            ConfigManager().config or {})
         # GPU path: hand the landing flourish to the Qt overlay.
         try:
             if bool((ConfigManager().config or {}).get("qt_overlay", True)):
@@ -975,7 +986,7 @@ class MouseController(metaclass=Singleton):
                 msg = {"cmd": "jump", "x": int(x), "y": int(y),
                        "accent": "#4CC2FF"}
                 if orange:
-                    msg["color"] = SNAP_DEBUG_COLOUR
+                    msg["color"] = SNAP_NOTIFY_COLOUR
                 OverlayClient.instance().send(msg)
                 return
         except Exception as e:
@@ -1029,14 +1040,14 @@ class MouseController(metaclass=Singleton):
             TICK_MAX_LEN = 36
             # Reticle active for roughly the first 60% of the animation.
             TICK_FRAMES = int(total_frames * 0.6)
-            TICK_COLOUR = SNAP_DEBUG_COLOUR if orange else "#9AA0A6"
+            TICK_COLOUR = SNAP_NOTIFY_COLOUR if orange else "#9AA0A6"
 
             # Grayscale palette: fresh-bright -> mid-gray -> near-black
-            # (orange shades for a snapped jump).
+            # (light-orange shades for a snapped jump).
             RING_PALETTE = [
-                "#FFC285", "#FFB066", "#FF9E47", "#FF8C1A",
-                "#E67A10", "#CC6A0C", "#B35C0A", "#994E08",
-                "#804106", "#663405",
+                "#FFDAB6", "#FFC891", "#FFB56D", "#FFA348",
+                "#DC8E41", "#B97839", "#966232", "#724D2B",
+                "#4F3823", "#2C221C",
             ] if orange else [
                 "#E8EAED", "#DADCE0", "#BDC1C6", "#9AA0A6",
                 "#80868B", "#5F6368", "#4D5156", "#3C4043",

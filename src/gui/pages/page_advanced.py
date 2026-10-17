@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 import tkinter
 
 import customtkinter
@@ -95,6 +96,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         # self._build_overlay_section()
         self._build_recovery_section()
         self._build_language_section()
+        self._build_about_section()
 
         self.load_initial_config()
 
@@ -113,11 +115,19 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         lbl.grid(row=self._next_row(), column=0, padx=20, pady=(10, 2),
                  sticky="nw")
 
-    def _section(self, text: str):
-        lbl = customtkinter.CTkLabel(master=self, text=text)
-        lbl.cget("font").configure(size=16, weight="bold")
-        lbl.grid(row=self._next_row(), column=0, padx=20, pady=(18, 4),
+    def _section(self, text: str, help_topic: str = None):
+        """A section heading; with `help_topic`, its "?" marker follows."""
+        if help_topic is None:
+            lbl = customtkinter.CTkLabel(master=self, text=text)
+            lbl.cget("font").configure(size=16, weight="bold")
+            lbl.grid(row=self._next_row(), column=0, padx=20, pady=(18, 4),
+                     sticky="nw")
+            return
+        from src.gui.help_icon import section_with_help
+        row = customtkinter.CTkFrame(master=self, fg_color="transparent")
+        row.grid(row=self._next_row(), column=0, padx=20, pady=(18, 4),
                  sticky="nw")
+        section_with_help(row, text, help_topic, size=16, padx=0, pady=0)
 
     def _subheader(self, text: str):
         lbl = customtkinter.CTkLabel(master=self, text=text)
@@ -160,6 +170,8 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             number_of_steps=80,
             command=self._on_submon_alpha_change)
         self.submon_alpha_slider.pack(side="left")
+        self.submon_alpha_slider.bind("<ButtonRelease-1>",
+                                      self._on_submon_alpha_release)
         cur = int(round(float(ConfigManager()._read_app_setting(
             "submonitor_alpha", 1.0)) * 100))
         self.submon_alpha_slider.set(max(20, min(100, cur)))
@@ -169,7 +181,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
     # ---------------------------------------------------------------- #
 
     def _build_chattering_section(self):
-        self._section(t("Chattering prevention"))
+        self._section(t("Chattering prevention"), "Chattering prevention")
 
         self.enabled_var = tkinter.BooleanVar()
         self.enabled_checkbox = self._grid(customtkinter.CTkCheckBox(
@@ -284,7 +296,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
     # ---------------------------------------------------------------- #
 
     def _build_recovery_section(self):
-        self._section(t("Auto recovery"))
+        self._section(t("Auto recovery"), "Auto recovery")
 
         self.wd_enabled_var = tkinter.BooleanVar(
             value=bool(ConfigManager().config.get(
@@ -466,6 +478,81 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             command=self._on_overlay_resume_toggle))
 
     # ---------------------------------------------------------------- #
+    # About GazeFace: a button here, the details on a page of their own
+    # (English only, like most About boxes - just the title is translated)
+    # ---------------------------------------------------------------- #
+
+    def _build_about_section(self):
+        brow = self._row_frame(pady=(18, 20))
+        customtkinter.CTkButton(
+            brow, text=t("About GazeFace"), width=180,
+            command=self._open_about_page).pack(side="left")
+
+    def _open_about_page(self):
+        from src.gui.panel_host import panel_host
+        host = panel_host()
+        if host is None:
+            return
+        body = host.push(t("About GazeFace"))
+        self._fill_about_page(body)
+
+    def _fill_about_page(self, body):
+        import platform
+        import sys
+        from src import paths
+        try:
+            from src import ui_access
+            edition = "UIAccess" if ui_access.active() else "Standard"
+        except Exception:
+            edition = "Standard"
+
+        rows = [
+            ("Version", ConfigManager().version),
+            ("Edition", edition),
+            ("Copyright", "© 2026 Nito Ninomae @12monkeys_nito"),
+            ("License", "Apache License 2.0"),
+            ("Based on", "Project Gameface by Google LLC "
+                         "(Apache License 2.0)"),
+            ("Third-party software",
+             "MediaPipe (Apache 2.0), OpenCV (Apache 2.0), "
+             "Qt for Python / PySide6 (LGPL v3), CustomTkinter (MIT), "
+             "IBM Plex fonts (SIL OFL 1.1)"),
+            ("Privacy", "Camera images are processed on this PC only. "
+                        "They are never saved or sent anywhere."),
+            ("Settings folder", str(paths.user_data_dir())),
+            ("System", "Windows %s, Python %s" % (
+                platform.version(), platform.python_version())),
+        ]
+        table = customtkinter.CTkFrame(body, fg_color="transparent")
+        table.pack(padx=20, pady=(10, 4), anchor="w")
+        for i, (name, value) in enumerate(rows):
+            customtkinter.CTkLabel(table, text=name, anchor="nw").grid(
+                row=i, column=0, sticky="nw", padx=(0, 16), pady=1)
+            customtkinter.CTkLabel(table, text=value, anchor="nw",
+                                   justify=tkinter.LEFT,
+                                   wraplength=460).grid(
+                row=i, column=1, sticky="nw", pady=1)
+
+        brow = customtkinter.CTkFrame(body, fg_color="transparent")
+        brow.pack(padx=20, pady=(8, 20), anchor="w")
+        customtkinter.CTkButton(
+            brow, text="Open settings folder", width=180,
+            command=lambda: self._open_path(paths.user_data_dir())).pack(
+                side="left", padx=(0, 8))
+        base = getattr(sys, "_MEIPASS", None) or paths.install_dir()
+        customtkinter.CTkButton(
+            brow, text="View license notices", width=180,
+            command=lambda: self._open_path(
+                os.path.join(base, "NOTICE"))).pack(side="left")
+
+    @staticmethod
+    def _open_path(path):
+        try:
+            os.startfile(str(path))
+        except Exception as e:
+            logger.error("open %s failed: %s", path, e)
+
+    # ---------------------------------------------------------------- #
     # UIAccess (not shown; the ui_access config key still applies)
     # ---------------------------------------------------------------- #
 
@@ -568,9 +655,15 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             logger.error("allow_multi_instance write failed: %s", e)
 
     def _on_submon_alpha_change(self, value):
+        # Live: straight to the sub-monitor, no file write per drag step.
+        from src.gui import sub_monitor
+        sub_monitor.set_live_alpha(round(float(value) / 100.0, 2))
+
+    def _on_submon_alpha_release(self, _event=None):
         try:
             ConfigManager().write_app_setting(
-                "submonitor_alpha", round(float(value) / 100.0, 2))
+                "submonitor_alpha",
+                round(float(self.submon_alpha_slider.get()) / 100.0, 2))
         except Exception as e:
             logger.error("submonitor_alpha write failed: %s", e)
 

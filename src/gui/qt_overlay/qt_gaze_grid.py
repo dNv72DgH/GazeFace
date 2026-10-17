@@ -108,6 +108,7 @@ class OverlayClient:
         # stall watchdog kills an overlay that stops accepting commands.
         self._writing_since = None
         self._watchdog = None
+        self._spawned_at = 0.0          # monotonic time of the last Popen
 
     def _start_writer(self):
         # Locked: send() is called from several threads, and is_alive() is
@@ -226,6 +227,12 @@ class OverlayClient:
             pass
 
     STALL_S = 3.0
+    # A new process reads nothing from stdin until Qt and the QML scene are
+    # up - 2-3 s normally, more under an antivirus scan - so a large first
+    # write (a replayed 5x6 launcher) can block that long without anything
+    # being wrong. Killing it then only spawns another cold process, the
+    # same thing happens again, and the revival cap ends with no overlay.
+    COLD_START_S = 15.0
 
     def _stall_watch(self):
         """Kill an overlay that has stopped taking commands.
@@ -234,8 +241,9 @@ class OverlayClient:
         its reader gone, it still holds the pipe open, so writes succeed
         until the pipe buffer fills and then block for ever - and to
         poll() it is "running", so it would never be replaced. A write that
-        has not completed in STALL_S is that case. Killing it unblocks the
-        writer (the write fails) and the writer replaces the process.
+        has not completed in STALL_S is that case (COLD_START_S for a
+        process that is still starting). Killing it unblocks the writer
+        (the write fails) and the writer replaces the process.
         """
         while not self._shutdown:
             time.sleep(1.0)
@@ -243,7 +251,11 @@ class OverlayClient:
             p = self.proc
             if since is None or p is None:
                 continue
-            if time.monotonic() - since > self.STALL_S:
+            now = time.monotonic()
+            limit = (self.COLD_START_S
+                     if now - self._spawned_at < self.COLD_START_S
+                     else self.STALL_S)
+            if now - since > limit:
                 self._kill(p, "it stopped accepting commands (write blocked "
                               "%.1f s)" % (time.monotonic() - since))
 
@@ -266,6 +278,7 @@ class OverlayClient:
                     cmd, cwd=cwd, stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=open(errp, "ab", buffering=0))
+                self._spawned_at = time.monotonic()
                 logger.info("overlay %s (pid=%s)",
                             "RESPAWNED after death" if dead else "spawned",
                             self.proc.pid)
@@ -344,7 +357,12 @@ class OverlayClient:
         if p is not None and p.poll() is None:
             try:
                 # Enqueue: the writer thread owns the pipe, two writers
-                # would interleave mid-message.
+                # would interleave mid-message. The writer is only started
+                # by send(), so an overlay prewarmed by ensure() and never
+                # sent anything has none yet - start it, or the quit is
+                # never written and every exit waits out the timeout and
+                # kills the process.
+                self._start_writer()
                 self._q.put_nowait({"cmd": "quit"})
             except Exception:
                 pass
@@ -474,6 +492,11 @@ class QtGazeGrid:
         # Default to (0,0) for a gesture-confirm before any dwell commit.
         cur = self._sel.cur
         return cur if cur is not None else (0, 0)
+
+    def notice(self, r, c, text, color="#D9622B"):
+        """Flash cell (r, c) and show `text` for a moment."""
+        self.client.send({"cmd": "notice", "cell": r * self.cols + c,
+                          "text": str(text), "color": color})
 
     def note_action(self):
         self._last_action = time.monotonic()

@@ -431,22 +431,19 @@ if __name__ == "__main__":
         except Exception as e:
             logging.error("wait-pid failed: %s", e)
 
-    # Started by Windows as an assistive technology (src/at_startup.py):
-    # at sign-in, or on the secure desktop of the sign-in / lock screen or
-    # a UAC prompt. The secure-desktop copy runs NEXT TO the everyday one,
-    # so it gets its own instance slot and stays out of the everyday
-    # copy's crash record and exe switching.
+    # Started by Windows as an assistive technology (src/at_startup.py),
+    # after sign-in. (The copy Windows starts on the secure desktop - the
+    # sign-in / lock screen, a UAC prompt - left for lite_main at the top
+    # of this file, so everything below is the everyday desktop.)
     from src import desktop_guard
     _AT_LAUNCH = "--at" in sys.argv
-    _SECURE = desktop_guard.on_secure_desktop()
     logging.info("DESKTOP own=%s input=%s at_launch=%s",
                  desktop_guard.own_desktop(),
                  desktop_guard.input_desktop(), _AT_LAUNCH)
 
     from src import single_instance
     single_instance.acquire(
-        _CONFIGS_DIR, quiet=_AT_LAUNCH,
-        scope=(desktop_guard.own_desktop() if _SECURE else ""))
+        _CONFIGS_DIR, quiet=_AT_LAUNCH, scope="")
 
     # One config snapshot per day, five kept. Every config write in the
     # app is a truncating rewrite, so a crash mid-write can leave a file
@@ -465,9 +462,6 @@ if __name__ == "__main__":
     # External crash sentinel: mark ourselves running-not-clean, then spawn
     # a separate process that relaunches us if we vanish without flipping
     # that mark (i.e. a native crash that never reaches TaskKiller.exit).
-    if _SECURE:
-        from src import sentinel as _sentinel_mod
-        _sentinel_mod.DISABLED = True
     try:
         from src import sentinel
         sentinel.write_marker(os.getpid(), clean=False)
@@ -497,12 +491,10 @@ if __name__ == "__main__":
         from src import restart as _restart
         from src import ui_access as _ui_access
         logging.info("UIACCESS %s", _ui_access.describe())
-        # On the secure desktop only the UIAccess exe may run at all, so
-        # there is nothing to switch to. A copy Windows started at sign-in
-        # stays too: Windows tracks it by process, and only a copy it
-        # knows about is brought along onto UAC prompts.
-        _want_exe = (None if (_SECURE or _AT_LAUNCH)
-                     else _ui_access.target_exe())
+        # A copy Windows started at sign-in stays as it is: Windows
+        # tracks it by process, and only a copy it knows about is brought
+        # along onto UAC prompts.
+        _want_exe = None if _AT_LAUNCH else _ui_access.target_exe()
         if _want_exe and _restart.switch_guard_set():
             logging.info(
                 "UIACCESS: would switch to %s but this process already is "
@@ -520,9 +512,7 @@ if __name__ == "__main__":
     try:
         from src import at_startup as _at
         desktop_guard.set_yield_enabled(_at.any_enabled())
-        if _SECURE:
-            desktop_guard.watch_secure_desktop(lambda: TaskKiller().exit())
-        elif _at.before_signin():
+        if _at.before_signin():
             threading.Thread(target=_at.mirror_configs, daemon=True,
                              name="signin-settings").start()
     except Exception as e:

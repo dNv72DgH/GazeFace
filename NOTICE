@@ -1,5 +1,5 @@
 GazeFace
-Copyright 2026 The GazeFace Authors
+Copyright 2026 Nito Ninomae @12monkeys_nito
 
 This product is a modified version of Project Gameface
 (https://github.com/google/project-gameface),
@@ -22,3 +22,14 @@ Third-party components
 - IBM Plex fonts (assets/fonts/)
   Copyright 2017 IBM Corp. with Reserved Font Name "Plex".
   SIL Open Font License, Version 1.1. See assets/fonts/OFL.txt.
+
+- OpenCV (bundled with the application)
+  Apache License, Version 2.0. https://opencv.org
+
+- Qt for Python / PySide6 (bundled with the application)
+  Copyright The Qt Company Ltd. GNU Lesser General Public License v3.
+  https://www.qt.io/qt-for-python
+
+- CustomTkinter (bundled with the application)
+  Copyright Tom Schimansky. MIT License.
+  https://github.com/TomSchimansky/CustomTkinter

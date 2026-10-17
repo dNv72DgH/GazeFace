@@ -71,6 +71,17 @@ PRIORITY_MIN = 0
 PRIORITY_MAX = 100
 PRIORITY_DEFAULT = 0
 
+# Disable on strong reaction: sensitivity sets the level, relative to the
+# gesture's own threshold, above which a reaction counts as strong and
+# unintended (a sudden laugh) - 1 = threshold x 1.05, each step +0.05
+# (100 = x 6.0); the gesture then stays off for the disabled time (s).
+STRONG_MIN = 1
+STRONG_MAX = 100
+STRONG_DEFAULT = 20
+STRONG_SECS_MIN = 1
+STRONG_SECS_MAX = 120
+STRONG_SECS_DEFAULT = 2
+
 # Per-gesture threshold-slider upper limit (in the binding page's slider
 # units; /LIMIT_FACTOR = the real threshold ceiling). Lowering it keeps
 # the threshold slider's width but shrinks its range, so small thresholds
@@ -135,6 +146,7 @@ class GestureOptionsPopup:
         self._col = right
         self._build_motion_freeze_section()
         self._build_block_section()
+        self._build_strong_off_section()
 
         # Start live-meter loop after the geometry is settled. Drive
         # it off the scrollable body — the body is created inside the
@@ -381,17 +393,12 @@ class GestureOptionsPopup:
     # ---------------------------------------------------------------- #
 
     def _build_motion_freeze_section(self):
-        section_with_help(self._col, t("Freeze pointer on gesture"), "Freeze pointer on gesture")
-
         self.freeze_enabled_var = tk.BooleanVar(
             value=bool(self._freeze_enabled_map().get(self.gesture, False)))
-        freeze_cb = customtkinter.CTkCheckBox(
-            master=self._col,
-            text=t("Freeze pointer when this gesture starts"),
-            variable=self.freeze_enabled_var,
-            onvalue=True, offvalue=False,
-            command=self._on_freeze_toggle)
-        freeze_cb.pack(padx=20, pady=(2, 8), anchor="w")
+        section_with_help(self._col, t("Freeze pointer on gesture"),
+                          "Freeze pointer on gesture",
+                          pady=(16, 8), variable=self.freeze_enabled_var,
+                          command=self._on_freeze_toggle)
 
         sens_lbl = customtkinter.CTkLabel(
             master=self._col, text=t("Freeze sensitivity"))
@@ -605,18 +612,12 @@ class GestureOptionsPopup:
     # ---------------------------------------------------------------- #
 
     def _build_block_section(self):
-        section_with_help(self._col, t("Block simultaneous input"),
-                          "Block simultaneous input")
-
         self.block_enabled_var = tk.BooleanVar(
             value=bool(self._block_enabled_map().get(self.gesture, False)))
-        block_cb = customtkinter.CTkCheckBox(
-            master=self._col,
-            text=t("Block other (lower-priority) gestures while moving"),
-            variable=self.block_enabled_var,
-            onvalue=True, offvalue=False,
-            command=self._on_block_toggle)
-        block_cb.pack(padx=20, pady=(2, 8), anchor="w")
+        section_with_help(self._col, t("Block simultaneous input"),
+                          "Block simultaneous input",
+                          pady=(16, 8), variable=self.block_enabled_var,
+                          command=self._on_block_toggle)
 
         # Movement sensitivity
         bsens_lbl = customtkinter.CTkLabel(
@@ -775,6 +776,110 @@ class GestureOptionsPopup:
             m[self.gesture] = v
             ConfigManager().set_temp_config("gesture_priority", m)
             ConfigManager().apply_config()
+
+    # ---------------------------------------------------------------- #
+    # Disable on strong reaction
+    # ---------------------------------------------------------------- #
+
+    def _build_strong_off_section(self):
+        self.strong_enabled_var = tk.BooleanVar(
+            value=bool(self._strong_enabled_map().get(self.gesture, False)))
+        section_with_help(self._col, t("Disable on strong reaction"),
+                          "Disable on strong reaction",
+                          pady=(16, 8), variable=self.strong_enabled_var,
+                          command=self._on_strong_toggle)
+
+        self.strong_slider, self.strong_entry, self.strong_var =             self._int_slider_row(
+                t("Sensitivity"), STRONG_MIN, STRONG_MAX,
+                self._strong_value("gesture_strong_off_sens",
+                                   STRONG_DEFAULT, STRONG_MIN, STRONG_MAX),
+                "gesture_strong_off_sens", top_pad=0)
+
+        self.secs_slider, self.secs_entry, self.secs_var =             self._int_slider_row(
+                t("Disabled time (s)"), STRONG_SECS_MIN, STRONG_SECS_MAX,
+                self._strong_value("gesture_strong_off_secs",
+                                   STRONG_SECS_DEFAULT, STRONG_SECS_MIN,
+                                   STRONG_SECS_MAX),
+                "gesture_strong_off_secs", top_pad=8)
+
+    def _strong_enabled_map(self):
+        return dict(ConfigManager().config.get(
+            "gesture_strong_off_enabled", {}) or {})
+
+    def _strong_value(self, key, default, lo, hi):
+        m = ConfigManager().config.get(key, {}) or {}
+        try:
+            v = int(m.get(self.gesture, default))
+        except (TypeError, ValueError):
+            v = default
+        return max(lo, min(hi, v))
+
+    def _save_strong(self, key, value):
+        m = dict(ConfigManager().config.get(key, {}) or {})
+        m[self.gesture] = value
+        ConfigManager().set_temp_config(key, m)
+        ConfigManager().apply_config()
+
+    def _on_strong_toggle(self):
+        self._save_strong("gesture_strong_off_enabled",
+                          bool(self.strong_enabled_var.get()))
+
+    def _int_slider_row(self, label, lo, hi, current, key, top_pad):
+        """Label + 1-step integer slider + entry, saved to `key` (per
+        gesture) on release / on a valid entry. Returns (slider, entry,
+        var)."""
+        lbl = customtkinter.CTkLabel(master=self._col, text=label)
+        lbl.cget("font").configure(size=12)
+        lbl.pack(padx=20, pady=(top_pad, 2), anchor="w")
+        row = customtkinter.CTkFrame(master=self._col, fg_color="transparent")
+        row.pack(padx=20, anchor="w", fill="x")
+        state = {"dragging": False, "trace": None}
+        var = tk.StringVar()
+        slider = customtkinter.CTkSlider(
+            master=row, from_=lo, to=hi, width=220, number_of_steps=hi - lo)
+        entry = customtkinter.CTkEntry(master=row, textvariable=var, width=64)
+
+        def set_text(v):
+            if state["trace"] is not None:
+                try:
+                    var.trace_vdelete("w", state["trace"])
+                except Exception:
+                    pass
+            var.set(str(v))
+            state["trace"] = var.trace("w", on_entry)
+
+        def on_drag(value):
+            state["dragging"] = True
+            v = int(round(value))
+            set_text(v)
+
+        def on_release(_e):
+            state["dragging"] = False
+            self._save_strong(key, int(round(slider.get())))
+
+        def on_entry(*_a):
+            try:
+                v = int(var.get().strip())
+            except ValueError:
+                entry.configure(fg_color="#ee9e9d")
+                return
+            if v < lo or v > hi:
+                entry.configure(fg_color="#ee9e9d")
+                return
+            entry.configure(fg_color="white")
+            slider.set(v)
+            if not state["dragging"]:
+                self._save_strong(key, v)
+
+        slider.configure(command=on_drag)
+        slider.bind("<Button-1>",
+                    lambda _e: state.__setitem__("dragging", True))
+        slider.bind("<ButtonRelease-1>", on_release)
+        slider.pack(side="left", padx=(0, 10))
+        entry.pack(side="left")
+        slider.set(current)
+        set_text(current)
+        return slider, entry, var
 
     # ---------------------------------------------------------------- #
 

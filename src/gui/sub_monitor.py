@@ -78,6 +78,18 @@ STALE_S = 1.5
 # ~30 fps. Only the fill arc is ever redrawn, and only when its
 # quantised angle or colour changed, so a still meter costs nothing.
 UPDATE_MS = 33
+# The opacity is pushed in memory by the Advanced-page slider
+# (set_live_alpha); the settings file is only re-read about once a second
+# as a fallback. Reading and parsing default.json on every 33 ms tick, on
+# the thread that also runs face detection, was ~30 file reads a second.
+ALPHA_POLL_TICKS = 30
+_live_alpha = None
+
+
+def set_live_alpha(alpha):
+    """Opacity (0.2..1.0) the sub-monitor should show from now on."""
+    global _live_alpha
+    _live_alpha = alpha
 
 
 class GestureSubMonitor:
@@ -95,6 +107,7 @@ class GestureSubMonitor:
         self._ema = {}           # gesture -> smoothed activation
         self._drag_off = None
         self._alpha = None       # last applied window opacity
+        self._alpha_ticks = 0
         self._visible = False
         self._last_state = None  # last logged window state (dedupes SUBMON)
         self._state_ticks = 0
@@ -104,16 +117,22 @@ class GestureSubMonitor:
     # Visibility
     # ------------------------------------------------------------- #
 
-    def _sync_alpha(self):
-        """Read the configured opacity and apply it if it changed.
-        Cheap enough to call each tick — only touches the window when
-        the value actually differs, so the Advanced-page slider updates
-        the live window without any direct reference."""
-        try:
-            a = float(ConfigManager()._read_app_setting(
-                "submonitor_alpha", 1.0))
-        except Exception:
-            a = 1.0
+    def _sync_alpha(self, force=False):
+        """Apply the configured opacity if it changed. Called each tick:
+        takes the slider's live value when there is one, and reads the
+        settings file only every ALPHA_POLL_TICKS ticks (or when forced).
+        Only touches the window when the value actually differs."""
+        self._alpha_ticks += 1
+        if _live_alpha is not None:
+            a = _live_alpha
+        elif force or self._alpha_ticks % ALPHA_POLL_TICKS == 0:
+            try:
+                a = float(ConfigManager()._read_app_setting(
+                    "submonitor_alpha", 1.0))
+            except Exception:
+                a = 1.0
+        else:
+            return
         a = max(0.2, min(1.0, a))
         if a != self._alpha and self._win is not None:
             self._alpha = a
@@ -126,7 +145,7 @@ class GestureSubMonitor:
         if self._win is None:
             self._build()
         self._win.deiconify()
-        self._sync_alpha()
+        self._sync_alpha(force=True)
         self._visible = True
         try:
             ConfigManager().write_app_setting("submonitor_visible", True)

@@ -318,9 +318,8 @@ class ExtGridOptionsPopup:
             logger.error("monitor toggle failed: %s", e2)
 
     def _clear_now(self):
-        e = self._data()
-        e[self.cfg_key]["history"] = []
-        ConfigManager().write_extensions(e)
+        from src.extensions import clip_store
+        clip_store.clear_history()
 
     # (The hide-task rule editor lives in hidden_tasks_popup.py.)
 
@@ -332,14 +331,31 @@ class ExtGridOptionsPopup:
         self.top = None
 
 
+def _plain_color(c):
+    """A colour CTk will take back through configure(). The app theme
+    gives one-item lists (["white"]), which configure() rejects - it
+    wants a string or a (light, dark) pair."""
+    if isinstance(c, (list, tuple)) and len(c) == 1:
+        return c[0]
+    return c
+
+
 class ClipListPopup:
     """A 3-column, multi-select list of clipboard entries with two views —
     the history and the pinned list — reachable from each other (the same
     ⇄ the runtime grid offers). History view: pin or delete the selected
-    entries. Pinned view: unpin (keep in history) or delete (drop from
-    both). Clicking a cell toggles its selection."""
+    entries. Pinned view: unpin (back to the history) or delete (drop from
+    both). Clicking a cell toggles its selection.
+
+    Entries come from the clipboard database one page at a time, filtered
+    by the search box, so a long history opens as fast as a short one.
+    The selection is kept by text, so it survives paging and searching."""
 
     COLS = 3
+    ROWS = 9                   # rows per page; sized to fit the panel
+    ROW_H = 40                 # button height (+ 2 x 3 px padding per row)
+    PAGE_SIZE = COLS * ROWS
+    SEARCH_DELAY_MS = 250
     SEL_FILL = "#F3E5DC"       # selected: pale orange fill + orange label
     SEL_TEXT = "#D9622B"
 
@@ -348,8 +364,16 @@ class ClipListPopup:
         self.mode = mode if mode in ("history", "pinned") else "history"
         self._host = None
         self.top = None
-        self._sel = set()          # selected indices in the current view
-        self._buttons = {}         # idx -> (button, default_fg, default_text)
+        self._sel = set()          # selected entry texts
+        self._buttons = {}         # text -> (button, default_fg, default_text)
+        self._query = ""
+        self._page = 0
+        self._search_after = None
+        self._list_frame = None
+        self._pager = None
+        self._pool = []
+        self._empty = None
+        self._default_colors = None
 
     def open(self):
         from src.gui.panel_host import panel_host
@@ -361,35 +385,27 @@ class ClipListPopup:
         self._build()
 
     # --- data ---
-    def _data(self):
-        e = ConfigManager().read_extensions()
-        e.setdefault("clipboard", {})
-        return e
+    def _kind(self):
+        from src.extensions import clip_store
+        return (clip_store.PINNED if self.mode == "pinned"
+                else clip_store.HISTORY)
 
-    def _key(self):
-        return "pinned" if self.mode == "pinned" else "history"
-
-    def _list(self):
-        return list((self._data().get("clipboard", {}) or {}).get(
-            self._key(), []) or [])
-
-    def _save(self, key, lst):
-        e = self._data()
-        e["clipboard"][key] = list(lst)
-        ConfigManager().write_extensions(e)
+    def _cap(self):
+        e = ConfigManager().read_extensions() or {}
+        try:
+            return int((e.get("clipboard") or {}).get("max", 100))
+        except (TypeError, ValueError):
+            return 100
 
     # --- build ---
     def _build(self):
         for w in self.top.winfo_children():
             w.destroy()
-        self._sel = set()
         self._buttons = {}
-
-        # (No in-body title — the tabs below already name the active view.)
 
         # View toggle — the two lists are reachable from each other. Tab
         # style: the ACTIVE view is orange with a bold white label, the
-        # inactive one plain white.
+        # inactive one plain white. The search box sits to their right.
         trow = customtkinter.CTkFrame(self.top, fg_color="transparent")
         trow.pack(padx=20, anchor="w", pady=(16, 6))
 
@@ -406,7 +422,13 @@ class ClipListPopup:
             return b
 
         _tab(t("History"), "history").pack(side="left", padx=(0, 8))
-        _tab(t("Pinned"), "pinned").pack(side="left")
+        _tab(t("Pinned"), "pinned").pack(side="left", padx=(0, 16))
+        self._search = customtkinter.CTkEntry(
+            trow, width=240, placeholder_text=t("Search"))
+        self._search.pack(side="left")
+        if self._query:
+            self._search.insert(0, self._query)
+        self._search.bind("<KeyRelease>", self._on_search_key)
 
         # Operations on the selected entries.
         orow = customtkinter.CTkFrame(self.top, fg_color="transparent")
@@ -425,96 +447,152 @@ class ClipListPopup:
         customtkinter.CTkButton(orow, text=t("Clear selection"), width=140,
                                 command=self._clear_sel).pack(side="left")
 
-        items = self._list()
-        if not items:
-            customtkinter.CTkLabel(self.top, text=t("(empty)")).pack(
-                padx=24, pady=20, anchor="w")
-            return
-        # The entry list scrolls INSIDE its own frame so the tabs and the
-        # operation buttons above stay put instead of scrolling away.
-        from src.gui.frames.safe_disposable_frame import style_scrollbar
-        gf = customtkinter.CTkScrollableFrame(
-            self.top, fg_color="transparent", height=360)
-        style_scrollbar(gf)
-        gf.pack(padx=16, pady=(0, 12), anchor="nw", fill="both", expand=True)
+        # One page = ROWS rows, sized to fit the panel: no scrollbar, the
+        # pager below moves between pages.
+        self._list_frame = customtkinter.CTkFrame(
+            self.top, fg_color="transparent")
+        self._list_frame.pack(padx=16, pady=(0, 4), anchor="nw", fill="x")
         # Fixed, equal-width columns so a wide entry can never push the grid
         # past the panel edge (the "3rd column cut off" case). Buttons fill
         # their column and clip their (truncated, newline-flattened) text.
         for col in range(self.COLS):
-            gf.grid_columnconfigure(col, weight=1, uniform="clipcol")
+            self._list_frame.grid_columnconfigure(col, weight=1,
+                                                  uniform="clipcol")
+        self._pool = []            # entry buttons, reused across pages
+        self._empty = None
+
+        prow = customtkinter.CTkFrame(self.top, fg_color="transparent")
+        prow.pack(padx=20, anchor="w", pady=(0, 12))
+        customtkinter.CTkButton(prow, text="◀", width=48,
+                                command=lambda: self._flip(-1)).pack(
+                                    side="left")
+        self._pager = customtkinter.CTkLabel(prow, text="", width=160)
+        self._pager.pack(side="left", padx=8)
+        customtkinter.CTkButton(prow, text="▶", width=48,
+                                command=lambda: self._flip(1)).pack(
+                                    side="left")
+        self._render()
+
+    def _render(self):
+        """Fill the list with the current page of the current view."""
+        from src.extensions import clip_store
+        if self._list_frame is None:
+            return
+        self._buttons = {}
+        total = clip_store.count(self._kind(), self._query)
+        npages = max(1, (total + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self._page = max(0, min(self._page, npages - 1))
+        items = clip_store.items(self._kind(), self._query,
+                                 limit=self.PAGE_SIZE,
+                                 offset=self._page * self.PAGE_SIZE)
+        self._pager.configure(text=t("%d / %d  (%d items)")
+                              % (self._page + 1, npages, total))
+        if self._empty is None:
+            self._empty = customtkinter.CTkLabel(self._list_frame,
+                                                 text=t("(empty)"))
+        if items:
+            self._empty.grid_remove()
+        else:
+            self._empty.grid(row=0, column=0, padx=8, pady=20, sticky="w")
+        # Buttons are made once and relabelled after that: creating a
+        # CTkButton costs ~10x relabelling one, so paging and searching
+        # stay quick.
         for i, txt in enumerate(items):
+            if i >= len(self._pool):
+                b = customtkinter.CTkButton(self._list_frame, text="",
+                                            width=100, height=self.ROW_H,
+                                            anchor="w")
+                self._pool.append(b)
+                self._default_colors = (_plain_color(b.cget("fg_color")),
+                                        _plain_color(b.cget("text_color")))
+            b = self._pool[i]
             r, c = divmod(i, self.COLS)
             disp = txt.replace("\n", " ").replace("\r", " ")[:30] or "(空)"
-            b = customtkinter.CTkButton(
-                gf, text=disp, width=100, height=40, anchor="w",
-                command=lambda i=i: self._toggle(i))
+            on = txt in self._sel
+            b.configure(text=disp, command=lambda x=txt: self._toggle(x),
+                        fg_color=self.SEL_FILL if on
+                        else self._default_colors[0],
+                        text_color=self.SEL_TEXT if on
+                        else self._default_colors[1])
             b.grid(row=r, column=c, padx=3, pady=3, sticky="ew")
-            self._buttons[i] = (b, b.cget("fg_color"), b.cget("text_color"))
+            self._buttons[txt] = (b,) + self._default_colors
+        for b in self._pool[len(items):]:
+            b.grid_remove()
+
+    # --- search / paging ---
+    def _on_search_key(self, _e=None):
+        if self._search_after is not None:
+            try:
+                self.top.after_cancel(self._search_after)
+            except Exception:
+                pass
+        self._search_after = self.top.after(self.SEARCH_DELAY_MS,
+                                            self._apply_search)
+
+    def _apply_search(self):
+        self._search_after = None
+        q = self._search.get().strip()
+        if q != self._query:
+            self._query = q
+            self._page = 0
+            self._render()
+
+    def _flip(self, d):
+        self._page += d
+        self._render()
 
     # --- selection ---
-    def _toggle(self, i):
-        b, dfg, dtext = self._buttons[i]
-        if i in self._sel:
-            self._sel.discard(i)
+    def _toggle(self, txt):
+        b, dfg, dtext = self._buttons[txt]
+        if txt in self._sel:
+            self._sel.discard(txt)
             b.configure(fg_color=dfg, text_color=dtext)
         else:
-            self._sel.add(i)
+            self._sel.add(txt)
             b.configure(fg_color=self.SEL_FILL, text_color=self.SEL_TEXT)
 
     def _clear_sel(self):
-        for i in list(self._sel):
-            b, dfg, dtext = self._buttons[i]
-            b.configure(fg_color=dfg, text_color=dtext)
+        for txt in list(self._sel):
+            if txt in self._buttons:
+                b, dfg, dtext = self._buttons[txt]
+                b.configure(fg_color=dfg, text_color=dtext)
         self._sel.clear()
 
     def _switch(self, mode):
         if mode != self.mode:
             self.mode = mode
+            self._sel.clear()
+            self._page = 0
             self._build()
-
-    def _chosen_texts(self):
-        items = self._list()
-        return {items[i] for i in self._sel if 0 <= i < len(items)}
 
     # --- operations ---
     def _pin_selected(self):
-        chosen = [t2 for t2 in self._list() if t2 in self._chosen_texts()]
-        if not chosen:
-            return
-        e = self._data()
-        cb = e["clipboard"]
-        pinned = list(cb.get("pinned", []) or [])
-        for txt in chosen:
-            if txt in pinned:
-                pinned.remove(txt)
-            pinned.insert(0, txt)
-        cb["pinned"] = pinned
-        ConfigManager().write_extensions(e)
-        self._build()
+        from src.extensions import clip_store
+        if self._sel:
+            clip_store.pin(list(self._sel))
+            self._sel.clear()
+            self._render()
 
     def _unpin_selected(self):
-        chosen = self._chosen_texts()
-        if not chosen:
-            return
-        self._save("pinned",
-                   [t2 for t2 in self._list() if t2 not in chosen])
-        self._build()
+        from src.extensions import clip_store
+        if self._sel:
+            clip_store.unpin(list(self._sel), self._cap())
+            self._sel.clear()
+            self._render()
 
     def _delete_selected(self):
-        chosen = self._chosen_texts()
-        if not chosen:
-            return
-        e = self._data()
-        cb = e["clipboard"]
-        cb[self._key()] = [x for x in self._list() if x not in chosen]
-        # Deleting a pinned entry drops it entirely (also from history).
-        if self.mode == "pinned":
-            cb["history"] = [x for x in (cb.get("history", []) or [])
-                             if x not in chosen]
-        ConfigManager().write_extensions(e)
-        self._build()
+        from src.extensions import clip_store
+        if self._sel:
+            clip_store.delete(self._kind(), list(self._sel))
+            self._sel.clear()
+            self._render()
 
     def close(self):
+        if self._search_after is not None and self.top is not None:
+            try:
+                self.top.after_cancel(self._search_after)
+            except Exception:
+                pass
         if self._host is not None and self.top is not None:
             self._host.pop(self.top)
         self.top = None

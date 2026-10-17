@@ -51,6 +51,11 @@ class TaskKiller(metaclass=Singleton):
     _spawned = False
     # pid of the replacement instance, so our own child sweep spares it.
     _spawned_pid = None
+    # Held for the WHOLE spawn, so "spawned" and "its pid" become known
+    # together. With only the flag guarded, the other exit path could see
+    # _spawned True while the pid was still None and reap the brand-new
+    # replacement (it is still our child by ppid).
+    _spawn_lock = threading.Lock()
 
     @classmethod
     def _reap_children(cls, why="", skip_pids=()):
@@ -108,15 +113,22 @@ class TaskKiller(metaclass=Singleton):
 
     @classmethod
     def _spawn_once(cls):
-        with cls._exit_lock:
+        with cls._spawn_lock:
             if cls._spawned:
                 return
             cls._spawned = True
-        try:
-            from src.restart import spawn_replacement
-            cls._spawned_pid = spawn_replacement()
-        except Exception as e:
-            logger.error("spawn replacement failed: %s", e, exc_info=e)
+            try:
+                from src.restart import spawn_replacement
+                cls._spawned_pid = spawn_replacement()
+            except Exception as e:
+                logger.error("spawn replacement failed: %s", e, exc_info=e)
+
+    @classmethod
+    def _replacement_pids(cls):
+        """The replacement's pid to spare, once any spawn in progress has
+        finished (waits for it)."""
+        with cls._spawn_lock:
+            return [cls._spawned_pid] if cls._spawned_pid else []
 
     def __init__(self):
         logger.info("Intialize TaskKiller singleton")
@@ -253,8 +265,7 @@ class TaskKiller(metaclass=Singleton):
             # leaving one stray GazeFace.exe per generation behind.
             TaskKiller._reap_children(
                 "force-kill",
-                skip_pids=([TaskKiller._spawned_pid]
-                           if TaskKiller._spawned_pid else ()))
+                skip_pids=TaskKiller._replacement_pids())
             os._exit(0)
 
         threading.Thread(target=_force_kill, name="ForceKill",
@@ -301,8 +312,7 @@ class TaskKiller(metaclass=Singleton):
         # teardown can reach this after the 6 s hammer has fired.)
         TaskKiller._reap_children(
             "teardown",
-            skip_pids=([TaskKiller._spawned_pid]
-                       if TaskKiller._spawned_pid else ()))
+            skip_pids=TaskKiller._replacement_pids())
 
         # Diagnostic: list any threads still alive at exit. A non-daemon
         # thread here is what would otherwise keep the process alive

@@ -53,6 +53,14 @@ class MainGui():
         self.tk_root.title("GazeFace")
         app_icon.apply_default(self.tk_root)
         self.tk_root.resizable(width=False, height=False)
+        # No system menu from a stray right click on the title bar.
+        from src.gui import no_caption_menu
+        no_caption_menu.install(self.tk_root)
+        # Gaze Jump can snap onto GazeFace's own buttons too (UI
+        # Automation cannot see Tk-drawn controls).
+        from src import click_snap
+        from src.gui import local_targets
+        click_snap.set_local_provider(local_targets.provider(self.tk_root))
         # Restore the last on-screen position (saved on exit). Size is
         # fixed, so only the +x+y offset is remembered.
         self._restore_window_pos()
@@ -157,12 +165,9 @@ class MainGui():
                 master=self.tk_root, logger_name="page_bookmarks"),
         }
         self.pages = {}
-        try:
-            from src import desktop_guard
-            lazy = desktop_guard.on_secure_desktop()
-        except Exception:
-            lazy = False
-        for name in (["page_home"] if lazy else self._page_factories):
+        # (The secure desktop never gets here - run_app hands it to the
+        # lite mode - so every page is built up front.)
+        for name in self._page_factories:
             self._build_page(name)
 
         self.page_names = list(self._page_factories.keys())

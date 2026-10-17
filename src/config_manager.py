@@ -15,7 +15,9 @@
 import copy
 import json
 import logging
+import os
 import shutil
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -94,17 +96,47 @@ class ConfigManager(metaclass=Singleton):
         except Exception:
             return default
 
+    _app_setting_lock = threading.Lock()
+
     def write_app_setting(self, field: str, value):
-        """Persist a top-level app-wide setting to DEFAULT_JSON."""
-        data = {}
-        try:
-            with open(DEFAULT_JSON) as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
-        data[field] = value
-        with open(DEFAULT_JSON, "w") as f:
-            json.dump(data, f, indent=4)
+        """Persist a top-level app-wide setting to DEFAULT_JSON.
+
+        The file holds every app-wide setting (default profile, language,
+        window position, ...), so a read that fails must never turn into
+        "write just this one key": that is what wiped them all whenever a
+        read caught the file half-written. A file that exists but cannot
+        be read is retried briefly and then left alone. The write goes
+        through a temporary file and a rename, so no reader ever sees a
+        half-written file in the first place.
+        """
+        with self._app_setting_lock:
+            data = None
+            for attempt in range(3):
+                try:
+                    with open(DEFAULT_JSON) as f:
+                        data = json.load(f)
+                    break
+                except FileNotFoundError:
+                    data = {}
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        logger.error("write_app_setting(%s): %s is "
+                                     "unreadable (%s) - not overwriting it",
+                                     field, DEFAULT_JSON, e)
+                        return
+                    time.sleep(0.05)
+            if not isinstance(data, dict):
+                logger.error("write_app_setting(%s): %s is not an object - "
+                             "not overwriting it", field, DEFAULT_JSON)
+                return
+            if field in data and data[field] == value:
+                return                      # unchanged: no write at all
+            data[field] = value
+            tmp = str(DEFAULT_JSON) + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=4)
+            os.replace(tmp, DEFAULT_JSON)
 
     # The "default" directory is the factory-defaults template that
     # `add_profile` copies from when the user creates a new profile.

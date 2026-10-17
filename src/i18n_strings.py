@@ -144,10 +144,9 @@ JA = {
     "Multiplier applied just to this gesture, on top of the global sensitivity. 1.0 = no change.":
         "グローバル感度に上乗せで、このジェスチャだけに掛かる倍率です。1.0 で変更なし。",
     "Hold time (ms)": "保持時間 (ms)",
-    "Freeze pointer on gesture": "ジェスチャ時ポインタ停止",
+    "Freeze pointer on gesture": "ジェスチャー時ポインタ停止",
     "When this gesture's value changes faster than the sensitivity below, the cursor freezes instantly so the act of making the gesture doesn't drag the pointer. It releases the moment the value settles.":
         "このジェスチャの値が下の感度より速く変化したとき、カーソルを即座に停止し、ジェスチャを作る動作でポインタが動かないようにします。値が落ち着いた瞬間に解放されます。",
-    "Freeze pointer when this gesture starts": "このジェスチャー開始時にポインタを停止",
     "Freeze sensitivity": "停止感度",
     "Lower = more sensitive (freezes on smaller motion).":
         "小さいほど高感度 (わずかな動きで停止)。",
@@ -157,9 +156,7 @@ JA = {
     "Block simultaneous input": "同時入力禁止",
     "While this gesture's value is moving, ignore input from other gestures with a lower priority. Use it to stop a faint twitch from firing while you make a deliberate gesture.":
         "このジェスチャの値が動いている間、優先順位の低い他のジェスチャの入力を無視します。意図的なジェスチャ中に、わずかなピクつきで誤発火するのを防ぎます。",
-    "Block other (lower-priority) gestures while moving":
-        "優先順位の低いジェスチャーをブロック",
-    "Movement sensitivity": "動き検出感度",
+    "Movement sensitivity": "検出感度",
     "Lower = treats smaller motion as 'moving'.":
         "小さいほど、わずかな動きを「動いている」と判定。",
     "Priority (higher wins)": "優先順位 (高いほど優先)",
@@ -229,7 +226,7 @@ JA = {
     "Sensitivity (x)": "感度 (倍)",
     "Overall sensitivity": "全体の感度",
     # Action options additions
-    "Allow Gaze Jump even when Face control is off": "顔コントロールがオフでも視線ジャンプを許可",
+    "Allow Gaze Jump even when Face control is off": "顔操作がオフでも視線ジャンプを許可",
     "By default Gaze Jump (and every other face-driven action) is suppressed while the Face control toggle in the bottom-left is off. Enable this if you want Gaze Jump specifically to still fire even with Face control off.":
         "デフォルトでは、左下の顔コントロールトグルがオフのとき視線ジャンプ (および全ての顔由来動作) は抑制されます。視線ジャンプだけは顔コントロールオフでも動かしたい場合はこれを有効化してください。",
     # Diagnostics section
@@ -600,10 +597,29 @@ JA = {
         "初回起動のため視線キャリブレーションを行います。次の画面で緑の点を順番に見つめて下さい。\n視線にずれを感じたら、こまめに左メニューより再キャリブレーションを行って下さい。",
     "Camera not found.\nIt is not connected, or another app is using it.":
         "カメラが見つかりません。\n接続されていないか、他アプリが使用中です。",
-    "Jump to the nearest clickable object": "直近のクリック可能オブジェクトにジャンプ",
+    "Jump to the nearest button or link": "直近のボタンやリンクにジャンプ",
+    "If there is a button or link near where the jump lands, the pointer goes onto it. In some apps and sites this does not work, or picks the wrong thing.":
+        "ジャンプ先の近くにボタンやリンクがあれば、そこにジャンプします。アプリやサイトによっては無効、または誤認識する事があります。",
     "Range (px)": "範囲 (px)",
+    "Visual cue": "視覚的に通知",
+    "When the jump lands on a button or link, its animation is coloured to tell you.":
+        "ボタンやリンクにジャンプした時にアニメーションに色を付け通知します。",
     "Slider lower limit": "スライダ下限値",
     "Mainly used when the response curve is set to \"strong -> weak\".": "主に反応カーブを強→弱に設定した時に使用します。",
+    "Disable on strong reaction": "強い反応時に無効化",
+    "Keeps a gesture from misfiring when you laugh suddenly or react in some other way you didn't mean.":
+        "不意に笑ってしまったりする事で発生するジェスチャーの暴発を抑制します。",
+    "Search": "検索",
+    "Added to pinned": "ピン留めに追加しました",
+    "Removed from pinned": "ピン留めから外しました",
+    "%d / %d  (%d items)": "%d / %d  (%d 件)",
+    "Sensitivity": "検出感度",
+    "About GazeFace": "GazeFaceについて",
+    "Suppresses chattering, where a click or other input is entered several times in a row without you meaning it. Recommended on.":
+        "クリックなどの入力が意図せず連続して入力されてしまうチャタリングを抑制します。オン推奨。",
+    "When an error occurs in the app, it tries to restart itself automatically so you are not left unable to operate it. If the settings are broken, it restarts with an earlier backup profile. Normally there is no need to change this setting.":
+        "アプリにエラーが発生した時に、操作不能とならないように自動で再起動を試みます。設定が壊れていた場合、過去のバックアッププロファイルで再起動します。通常は設定を変える必要はありません。",
+    "Disabled time (s)": "無効時間（秒）",
 }
 
 TRANSLATIONS = {

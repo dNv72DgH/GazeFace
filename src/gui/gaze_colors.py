@@ -29,8 +29,8 @@ from src.config_manager import ConfigManager
 
 DEFAULTS = {
     "background": "#101214",
-    "cell": "#1B1D22",
-    "highlight": "#2A3A22",
+    "cell": "#202228",
+    "highlight": "#382E1F",
     "transparency": 80,
 }
 
@@ -38,9 +38,9 @@ DEFAULTS = {
 # Gaze-MOVE (the 8 compass arrows) has its own small palette: the arrows,
 # the centre ring target, and the cursor-follow ring shown during the glide.
 MOVE_DEFAULTS = {
-    "arrow": "#F6F4F0",
-    "center": "#F6F4F0",
-    "pointer": "#F6F4F0",
+    "arrow": "#CFC5AF",
+    "center": "#CFC5AF",
+    "pointer": "#CFC5AF",
 }
 
 

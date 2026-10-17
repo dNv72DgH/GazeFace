@@ -40,10 +40,10 @@ BG = "#0E0F11"
 # draw stay visible. The dimmed cell backgrounds live on a separate
 # backdrop window whose -alpha is the only thing that's semi-transparent.
 TRANSP_KEY = "#FF00FF"
-CELL_BG = "#1B1D22"
+CELL_BG = "#202228"
 CELL_LINE = "#3C4043"
 CELL_HILITE = "#1A73E8"      # cell currently under gaze
-APP_CELL_BG = "#2A3A22"      # app-specific item cell tint
+APP_CELL_BG = "#382E1F"      # app-specific item cell tint
 TITLE_FG = "#E8EAED"
 TITLE_DIM = "#9AA0A6"
 TICK_MS = 50
@@ -294,6 +294,34 @@ class GazeGrid:
         # Default to (0,0) for a gesture-confirm before any dwell commit.
         cur = self._sel.cur
         return cur if cur is not None else (0, 0)
+
+    def notice(self, r, c, text, color="#D9622B"):
+        """Flash cell (r, c) and show `text` for a moment (the simpler
+        tkinter version of the Qt overlay's notice)."""
+        if self.canvas is None or self.top is None:
+            return
+        item = self._cell_items.get(f"{r},{c}")
+        if item:
+            self.canvas.itemconfig(item["rect"], outline=color, width=10)
+
+            def _restore(rect=item["rect"], cell=(r, c)):
+                if self.canvas is None:
+                    return
+                try:
+                    on = self._drawn == cell
+                    self.canvas.itemconfig(
+                        rect, outline=CELL_HILITE if on else CELL_LINE,
+                        width=5 if on else 2)
+                except tk.TclError:
+                    pass          # the page was redrawn meanwhile
+            self.top.after(700, _restore)
+        self.canvas.delete("notice")
+        self.canvas.create_text(
+            self._screen_w / 2, max(30, self._screen_h * 0.04),
+            text=str(text), fill=TITLE_FG, font=("Segoe UI", 28, "bold"),
+            tags="notice")
+        self.top.after(2000, lambda: self.canvas is not None
+                       and self.canvas.delete("notice"))
 
     def note_action(self):
         self._last_action = time.monotonic()

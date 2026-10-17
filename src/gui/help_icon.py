@@ -83,6 +83,10 @@ HELP_TEXTS = {
         "Block simultaneous input",
         "Set this when gestures other than the one you mean respond at "
         "the same time."),
+    "Disable on strong reaction": (
+        "Disable on strong reaction",
+        "Keeps a gesture from misfiring when you laugh suddenly or "
+        "react in some other way you didn't mean."),
     "Ignore blinks / involuntary movements": (
         "Ignore blinks / involuntary movements",
         "Keeps a blink or an involuntary movement from stopping the "
@@ -96,6 +100,17 @@ HELP_TEXTS = {
         "Hold trigger delay(ms)",
         "After the first click, keeping the gesture up for this long "
         "turns it into a held press (drag)."),
+    # ---- Advanced ----
+    "Chattering prevention": (
+        "Chattering prevention",
+        "Suppresses chattering, where a click or other input is entered "
+        "several times in a row without you meaning it. Recommended on."),
+    "Auto recovery": (
+        "Auto recovery",
+        "When an error occurs in the app, it tries to restart itself "
+        "automatically so you are not left unable to operate it. If the "
+        "settings are broken, it restarts with an earlier backup "
+        "profile. Normally there is no need to change this setting."),
     # ---- Advanced: startup ----
     "At sign-in": (
         "At sign-in (starts on the sign-in screen etc.)",
@@ -115,6 +130,15 @@ HELP_TEXTS = {
         "detection has limited accuracy, so it can only take you to the "
         "rough area; used together with Gaze move or head tracking it "
         "gets you there precisely, and quickly."),
+    "Jump to the nearest button or link": (
+        "Jump to the nearest button or link",
+        "If there is a button or link near where the jump lands, the "
+        "pointer goes onto it. In some apps and sites this does not work, "
+        "or picks the wrong thing."),
+    "Visual cue": (
+        "Visual cue",
+        "When the jump lands on a button or link, its animation is "
+        "coloured to tell you."),
     "Start Gaze move right after the jump": (
         "Start Gaze move right after the jump",
         "Makes the fine movement quick. Recommended on."),
@@ -189,8 +213,11 @@ def _image(size):
 
 
 def section_with_help(parent, text, topic, size=14, padx=20,
-                      pady=(16, 2)):
+                      pady=(16, 2), variable=None, command=None):
     """A bold section heading followed by its "?" marker.
+
+    With `variable`, an on/off checkbox (bound to it, calling `command`)
+    sits in front of the heading, for a section that is itself a switch.
 
     Returns the heading label. The two live in a transparent row so the
     marker sits right after the words however long they are - a fixed
@@ -198,6 +225,11 @@ def section_with_help(parent, text, topic, size=14, padx=20,
     """
     row = customtkinter.CTkFrame(parent, fg_color="transparent")
     row.pack(padx=padx, pady=pady, anchor="w")
+    if variable is not None:
+        customtkinter.CTkCheckBox(
+            row, text="", width=24, variable=variable,
+            onvalue=True, offvalue=False, command=command).pack(
+                side="left", padx=(0, 6))
     label = customtkinter.CTkLabel(row, text=text)
     label.cget("font").configure(size=size, weight="bold")
     label.pack(side="left")

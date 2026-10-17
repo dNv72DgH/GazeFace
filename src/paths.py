@@ -35,6 +35,7 @@ Import this before anything that touches config or logging: run_app
 calls ensure_user_data() at module scope, ahead of the log handler.
 """
 
+import json
 import logging
 import os
 import shutil
@@ -156,6 +157,37 @@ def _copy_configs(src: Path, dst: Path):
         dirs_exist_ok=True)
 
 
+# Choices made in the installer, handed to the app's first run: the
+# installer writes {app}\install_defaults.json and a FRESH settings folder
+# takes them over (an existing user's settings are never touched). Only
+# app-wide keys of default.json are accepted.
+INSTALL_DEFAULTS = "install_defaults.json"
+_INSTALL_DEFAULT_KEYS = {"language": ("en", "ja")}
+
+
+def _apply_install_defaults(cfg: Path) -> None:
+    src = install_dir() / INSTALL_DEFAULTS
+    if not src.is_file():
+        return
+    try:
+        with open(src, encoding="utf-8-sig") as f:
+            given = json.load(f)
+        target = cfg / "default.json"
+        with open(target, encoding="utf-8") as f:
+            data = json.load(f)
+        changed = False
+        for key, allowed in _INSTALL_DEFAULT_KEYS.items():
+            if key in given and given[key] in allowed:
+                data[key] = given[key]
+                changed = True
+        if changed:
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+            logger.info("Applied installer defaults %s", given)
+    except Exception as e:
+        logger.error("install defaults not applied: %s", e)
+
+
 def ensure_user_data() -> Path:
     """Make sure the user-data configs exist, seeding them on first run.
 
@@ -179,6 +211,8 @@ def ensure_user_data() -> Path:
                 _copy_configs(src, cfg)
                 logger.info("Seeded user data from %s (%s) -> %s",
                             src, what, cfg)
+                if src == bundled_configs_dir():
+                    _apply_install_defaults(cfg)
                 return cfg
         # Nothing to copy (unusual). Leave the dir; the caller's own
         # missing-config path reports it properly.

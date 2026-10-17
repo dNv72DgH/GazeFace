@@ -14,7 +14,7 @@
 """Gaze clipboard history.
 
 A background monitor records clipboard TEXT (deduped, capped, persisted
-in configs/extensions.json so it survives restarts). The gaze grid shows
+in the clipboard database, src/extensions/clip_store.py). The gaze grid shows
 recent entries; the centre cells of the left/right edges page through
 history. Confirm pastes the chosen text into the foreground app (set
 clipboard + restore foreground + Ctrl+V) and closes. Gesture actions:
@@ -28,8 +28,16 @@ import time
 import pydirectinput
 
 from src.config_manager import ConfigManager
+from src.extensions import clip_store
+from src.i18n import t
 
 logger = logging.getLogger("ClipboardHistory")
+
+# Pin / unpin on the same grid cell is ignored for this long after the
+# last one, so one gesture cannot register twice.
+PIN_REPEAT_S = 5.0
+PIN_ADD_COLOR = "#D9622B"       # app orange
+PIN_REMOVE_COLOR = "#9AA0A6"    # neutral grey
 
 # Serialise ALL clipboard access. The background monitor thread reads the
 # clipboard every second while the paste thread writes it; two threads in
@@ -50,6 +58,13 @@ def _tool_icon(name):
 def _cb_cfg():
     return (ConfigManager().read_extensions() or {}).get(
         "clipboard", {}) or {}
+
+
+def _cap():
+    try:
+        return int(_cb_cfg().get("max", 100))
+    except (TypeError, ValueError):
+        return 100
 
 
 def _get_clipboard_text():
@@ -133,16 +148,10 @@ class ClipboardMonitor:
             time.sleep(1.0)
 
     def _record(self, txt):
-        e = ConfigManager().read_extensions()
-        cb = e.setdefault("clipboard", {})
-        hist = cb.setdefault("history", [])
-        if txt in hist:
-            hist.remove(txt)
-        hist.insert(0, txt)
-        mx = int(cb.get("max", 100))
-        if mx > 0:
-            del hist[mx:]
-        ConfigManager().write_extensions(e)
+        try:
+            clip_store.record(txt, _cap())
+        except Exception as e:
+            logger.error("clipboard record failed: %s", e)
 
 
 def maybe_start_monitor():
@@ -150,9 +159,7 @@ def maybe_start_monitor():
     the 'clear on start' option."""
     cfg = _cb_cfg()
     if cfg.get("clear_on_start"):
-        e = ConfigManager().read_extensions()
-        e.setdefault("clipboard", {})["history"] = []
-        ConfigManager().write_extensions(e)
+        clip_store.clear_history()
     if cfg.get("enabled"):
         ClipboardMonitor.instance().start()
 
@@ -185,6 +192,7 @@ class ClipboardHistory:
         self._cols = 3
         self._cellmap = {}
         self._saved_fg = None
+        self._pin_last = {}        # (mode, r, c) -> monotonic time
 
     def gesture_map(self):
         # Stored gesture-keyed: {gesture_name: slot}. Several gestures can
@@ -208,8 +216,7 @@ class ClipboardHistory:
         cfg = _cb_cfg()
         self._rows = int(cfg.get("rows", 3))
         self._cols = int(cfg.get("cols", 3))
-        self._history = list(cfg.get("history", []) or [])
-        self._pinned = list(cfg.get("pinned", []) or [])
+        self._reload()
         self._mode = "history"
         self._page = 0
         self._active = True
@@ -230,6 +237,10 @@ class ClipboardHistory:
         except Exception as e:
             logger.error("clipboard open failed: %s", e)
             self.close()
+
+    def _reload(self):
+        self._history = clip_store.items(clip_store.HISTORY)
+        self._pinned = clip_store.items(clip_store.PINNED)
 
     def _show_page_btns(self):
         return bool(_cb_cfg().get("page_btns", True))
@@ -328,23 +339,9 @@ class ClipboardHistory:
         lst = self._cur_list()
         if not isinstance(target, int) or not (0 <= target < len(lst)):
             return                       # a paging / list-switch cell
-        txt = lst[target]
-        e = ConfigManager().read_extensions()
-        cb = e.setdefault("clipboard", {})
-        key = "pinned" if self._mode == "pinned" else "history"
-        stored = cb.setdefault(key, [])
-        try:
-            stored.remove(txt)
-        except ValueError:
-            pass
-        ConfigManager().write_extensions(e)
-        if self._mode == "pinned":
-            self._pinned = list(stored)
-        else:
-            # The monitor keeps no copy of its own (it re-reads the config
-            # on every capture), so the config write above plus this local
-            # snapshot is the whole story.
-            self._history = list(stored)
+        clip_store.delete(clip_store.PINNED if self._mode == "pinned"
+                          else clip_store.HISTORY, [lst[target]])
+        self._reload()
         # Deleting the last entry of a page can leave the view past the
         # end; walk back rather than showing an empty grid.
         self._page = min(self._page, self._npages() - 1)
@@ -372,57 +369,58 @@ class ClipboardHistory:
         """
         if self.grid is None:
             return
-        if self._mode == "pinned":
-            self._unpin_current()
-            return
         r, c = self.grid.current_cell()
+        if self._pin_blocked(r, c):
+            return
+        if self._mode == "pinned":
+            self._unpin_current(r, c)
+            return
         target = self._cellmap.get(f"{r},{c}")
         if not isinstance(target, int) or not (
                 0 <= target < len(self._history)):
             return
-        txt = self._history[target]
-        e = ConfigManager().read_extensions()
-        cb = e.setdefault("clipboard", {})
-        pinned = cb.setdefault("pinned", [])
-        if txt in pinned:
-            pinned.remove(txt)
-        pinned.insert(0, txt)
-        ConfigManager().write_extensions(e)
-        self._pinned = list(pinned)
+        clip_store.pin([self._history[target]])
+        self._reload()
         if self.grid:
             self.grid.update_cells(self._page_cells())
+        self._pin_done(r, c, t("Added to pinned"), PIN_ADD_COLOR)
 
-    def _unpin_current(self):
+    def _unpin_current(self, r, c):
         """Take the selected entry off the pinned list and return it to
         the clipboard history (newest first, honouring the history cap)."""
-        r, c = self.grid.current_cell()
         target = self._cellmap.get(f"{r},{c}")
         if not isinstance(target, int) or not (
                 0 <= target < len(self._pinned)):
             return                       # a paging / list-switch cell
-        txt = self._pinned[target]
-        e = ConfigManager().read_extensions()
-        cb = e.setdefault("clipboard", {})
-        pinned = cb.setdefault("pinned", [])
-        try:
-            pinned.remove(txt)
-        except ValueError:
-            pass
-        hist = cb.setdefault("history", [])
-        if txt in hist:
-            hist.remove(txt)
-        hist.insert(0, txt)
-        mx = int(cb.get("max", 100))
-        if mx > 0:
-            del hist[mx:]
-        ConfigManager().write_extensions(e)
-        self._pinned = list(pinned)
-        self._history = list(hist)
+        clip_store.unpin([self._pinned[target]], _cap())
+        self._reload()
         # Unpinning the last entry of a page can leave the view past the
         # end; walk back rather than showing an empty grid.
         self._page = min(self._page, self._npages() - 1)
         if self.grid:
             self.grid.update_cells(self._page_cells())
+        self._pin_done(r, c, t("Removed from pinned"), PIN_REMOVE_COLOR)
+
+    def _pin_blocked(self, r, c):
+        """True within PIN_REPEAT_S of the last pin/unpin on this cell.
+        A gesture held a moment too long, or repeated by a twitch, would
+        otherwise pin the same entry twice - or, in the pinned list,
+        unpin the entry that has just moved up into the cell."""
+        last = self._pin_last.get((self._mode, r, c))
+        if last is not None and time.monotonic() - last < PIN_REPEAT_S:
+            logger.info("pin on cell %d,%d ignored (repeat within %.0f s)",
+                        r, c, PIN_REPEAT_S)
+            return True
+        return False
+
+    def _pin_done(self, r, c, message, color):
+        self._pin_last[(self._mode, r, c)] = time.monotonic()
+        notice = getattr(self.grid, "notice", None)
+        if notice is not None:
+            try:
+                notice(r, c, message, color)
+            except Exception as e:
+                logger.debug("pin notice failed: %s", e)
 
     def _confirm(self):
         r, c = self.grid.current_cell()

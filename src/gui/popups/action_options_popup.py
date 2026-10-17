@@ -394,13 +394,16 @@ class ActionOptionsPopup:
         cfg = ConfigManager().config or {}
         self.snap_var = tk.BooleanVar(
             value=bool(cfg.get("pointer_jump_snap", False)))
+        snap_row = customtkinter.CTkFrame(master=self._col,
+                                          fg_color="transparent")
+        snap_row.pack(padx=20, pady=(18, 4), anchor="w")
         customtkinter.CTkCheckBox(
-            master=self._col,
-            text=t("Jump to the nearest clickable object"),
+            master=snap_row,
+            text=t("Jump to the nearest button or link"),
             variable=self.snap_var, onvalue=True, offvalue=False,
-            command=lambda: self._gm_save(
-                "pointer_jump_snap", bool(self.snap_var.get()))).pack(
-                    padx=20, pady=(18, 4), anchor="w")
+            command=self._on_snap_toggle).pack(side="left")
+        HelpIcon(snap_row, "Jump to the nearest button or link").pack(
+            side="left", padx=(8, 0))
 
         lbl = customtkinter.CTkLabel(master=self._col, text=t("Range (px)"))
         lbl.cget("font").configure(size=14, weight="bold")
@@ -426,6 +429,33 @@ class ActionOptionsPopup:
         self.snap_slider.set(px)
         self.snap_px_var.set(str(px))
         self._snap_trace = self.snap_px_var.trace("w", self._on_snap_entry)
+
+        from src.controllers.mouse_controller import (
+            SNAP_NOTIFY_KEY, snap_notify_enabled)
+        self.snap_notify_var = tk.BooleanVar(
+            value=snap_notify_enabled(cfg))
+        # A sub-option of the snap: indented under it, and greyed out while
+        # the snap is off.
+        notify_row = customtkinter.CTkFrame(master=self._col,
+                                            fg_color="transparent")
+        notify_row.pack(padx=(48, 20), pady=(12, 4), anchor="w")
+        self.snap_notify_cb = customtkinter.CTkCheckBox(
+            master=notify_row,
+            text=t("Visual cue"),
+            variable=self.snap_notify_var, onvalue=True, offvalue=False,
+            command=lambda: self._gm_save(
+                SNAP_NOTIFY_KEY, bool(self.snap_notify_var.get())))
+        self.snap_notify_cb.pack(side="left")
+        HelpIcon(notify_row, "Visual cue").pack(side="left", padx=(8, 0))
+        self._sync_snap_notify_state()
+
+    def _on_snap_toggle(self):
+        self._gm_save("pointer_jump_snap", bool(self.snap_var.get()))
+        self._sync_snap_notify_state()
+
+    def _sync_snap_notify_state(self):
+        self.snap_notify_cb.configure(
+            state="normal" if self.snap_var.get() else "disabled")
 
     def _on_snap_drag(self, value):
         self._snap_dragging = True
