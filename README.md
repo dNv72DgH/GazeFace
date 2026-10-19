@@ -27,6 +27,8 @@ Download `GazeFace-Setup-<version>.exe` from [Releases](../../releases) and run 
 
 The installer is not code-signed yet, so Windows SmartScreen may warn you. Choose "More info" → "Run anyway" to continue.
 
+If Windows blocks the installer without offering "Run anyway", Smart App Control is probably on. You can check it under Windows Security → App & browser control → Smart App Control settings. Turning it off lets unsigned apps such as GazeFace run, but it cannot be turned back on without reinstalling Windows. GazeFace cannot be installed in Windows S mode.
+
 While it runs, GazeFace checks for a new version once a day and offers it inside its window. Nothing is installed until you choose "Update now"; the update then installs without further prompts and GazeFace restarts by itself.
 
 To uninstall, use Settings → Apps.
