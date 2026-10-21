@@ -26,7 +26,7 @@ from src import paths
 from src.singleton_meta import Singleton
 from src.task_killer import TaskKiller
 
-VERSION = "1.01"
+VERSION = "1.02"
 
 # User settings live under %LOCALAPPDATA%\GazeFace (see src/paths.py).
 # These were bare-relative paths resolved against the CWD, which meant

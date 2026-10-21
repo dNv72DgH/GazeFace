@@ -589,10 +589,12 @@ JA = {
         "%s にインストールされています。Program Files 内である必要があります",
     "%s is not signed":
         "%s に署名がありません",
+    "%s is not signed by a trusted certificate":
+        "%s の署名が信頼されていません",
     "exit code %d":
         "終了コード %d",
-    "Starts an ultra-light version just for signing in, meant only for typing with the on-screen keyboard. Only mouse operation, Gaze Jump and Gaze move can be used. The Gaze Jump and Gaze move animations are not drawn.\nNot available in the portable version or in some environments.":
-        "スクリーンキーボードの入力のみを目的とした、サインイン専用の超軽量版を起動します。マウス操作、視線ジャンプ、視線移動のみ使用可。視線ジャンプ、視線移動のアニメーション描画は省略されます。\nポータブル版や一部環境では無効になります。",
+    "Starts an ultra-light version just for signing in to Windows, meant only for typing with the on-screen keyboard. Only mouse operation, Gaze Jump and Gaze move can be used. The Gaze Jump and Gaze move animations are not drawn.":
+        "スクリーンキーボードの入力のみを目的とした、Windowsサインイン専用の超軽量版を起動します。マウス操作、視線ジャンプ、視線移動のみ使用可。視線ジャンプ、視線移動のアニメーション描画は省略されます。",
     "This is the first launch, so the gaze calibration runs now. On the next screen, look at each green dot in turn.\nIf the gaze seems off, recalibrate often from the left menu.":
         "初回起動のため視線キャリブレーションを行います。次の画面で緑の点を順番に見つめて下さい。\n視線にずれを感じたら、こまめに左メニューより再キャリブレーションを行って下さい。",
     "Camera not found.\nIt is not connected, or another app is using it.":

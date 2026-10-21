@@ -1,13 +1,20 @@
-﻿; GazeFace installer (Inno Setup 6) - standard edition (spec 2-A).
-; Built by build_installer.ps1, which passes AppVersion and DistDir.
-; See INSTALLER_SPEC.md. This installer never creates certificates,
-; touches certificate stores or signs anything (spec chapter 1).
+﻿; GazeFace installer (Inno Setup 6) - full / standard edition, chosen on
+; a wizard page. Built by build_installer.ps1, which passes AppVersion and
+; DistDir. The installer itself never creates certificates, touches
+; certificate stores or signs anything; the full edition runs
+; custom\full_edition.ps1 elevated after
+; the install, and whatever it does is up to that script.
+; User-written parts: custom\texts.iss (option descriptions, finish
+; notes) and custom\full_edition.ps1.
 
 #ifndef AppVersion
   #error AppVersion is not defined. Use build_installer.ps1.
 #endif
 #ifndef DistDir
   #error DistDir is not defined. Use build_installer.ps1.
+#endif
+#ifndef DriverPkg
+  #error DriverPkg is not defined. Use build_installer.ps1.
 #endif
 
 #define AccKey "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Accessibility"
@@ -48,6 +55,8 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "ja"; MessagesFile: "compiler:Languages\Japanese.isl"
 
 [CustomMessages]
+en.AfterInstall=When the installation is finished:
+ja.AfterInstall=インストール完了後:
 en.LaunchApp=Start GazeFace
 ja.LaunchApp=GazeFace を起動する
 en.StopAsk=GazeFace is running. Close it to continue?
@@ -56,11 +65,35 @@ en.StopFailed=Please close GazeFace, then run this again.
 ja.StopFailed=GazeFace を終了してから、もう一度実行してください。
 en.DeleteSettings=Also delete your GazeFace settings (profiles, gestures, calibration, ...)?%n%nIf you keep them, they are used again when you reinstall GazeFace.
 ja.DeleteSettings=GazeFace の設定（プロファイル、ジェスチャー、キャリブレーションなど）も削除しますか？%n%n残しておくと、もう一度インストールしたときにそのまま使えます。
-en.DoneStandard=GazeFace has been installed.%n%nLimits of the standard edition%nBecause of how Windows permissions work, the standard edition of GazeFace cannot operate windows that run as administrator, such as Task Manager, some Settings pages, app installers and User Account Control prompts.%nWhile such a window is in front, the pointer may stop moving or clicks may stop working. Update notices and installers can open on their own, so this can happen at unexpected moments. GazeFace also cannot be used on the sign-in screen.%nIf you cannot use a mouse or keyboard, please have help from family or a caregiver, or Windows Voice Access, ready for these situations.
-ja.DoneStandard=GazeFace のインストールが完了しました。%n%n通常版の制限について%n通常版の GazeFace は、Windows の権限の仕組みのため、管理者として実行されているウィンドウを操作できません。たとえば、タスク マネージャー、一部の設定画面、アプリのインストーラー、「ユーザー アカウント制御」の確認画面などです。%nこうしたウィンドウが前面に出ると、その間はポインターが動かなくなったり、クリックが効かなくなったりします。アップデートの通知やインストーラーなどが自動で開く場合もあるため、予期しないタイミングで操作できなくなることがあります。サインイン画面でも GazeFace は使えません。%nマウスやキーボードを使えない方は、こうした場面に備えて、家族や介助者の方の手助けや、Windows の音声アクセスを用意しておいてください。
+en.EditionTitle=Choose an edition
+ja.EditionTitle=インストールする版の選択
+en.EditionSub=Select which edition of GazeFace to install.
+ja.EditionSub=インストールする GazeFace の版を選んでください。
+en.FullName=Full edition
+ja.FullName=完全版
+en.StandardName=Standard edition
+ja.StandardName=通常版
+en.StartupTitle=Starting with Windows
+ja.StartupTitle=起動の設定
+en.StartupSub=Choose when Windows starts GazeFace.
+ja.StartupSub=Windows が GazeFace を起動するタイミングを選んでください。
+en.LogonName=Start the lite edition on the sign-in screen
+ja.LogonName=サインイン画面で軽量版を起動する
+en.AfterSigninName=Start after sign-in
+ja.AfterSigninName=サインイン後に起動する
+en.RunningFull=Setting up the full edition...
+ja.RunningFull=完全版のセットアップを実行しています...
+en.FullFailed=The full edition setup script failed (code %1).%n%nGazeFace has been installed, but full edition features may not work.
+ja.FullFailed=完全版のセットアップ スクリプトが失敗しました（コード %1）。%n%nGazeFace はインストールされましたが、完全版の機能が動かない可能性があります。
+
+; FullDesc / StandardDesc / LogonDesc / AfterSigninDesc / DoneFull / DoneStandard
+#include "custom\texts.iss"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Chosen before the install (checked every time); started when the finish
+; page appears (CurPageChanged), so no checkbox on that page.
+Name: "launchapp"; Description: "{cm:LaunchApp}"; GroupDescription: "{cm:AfterInstall}"
 
 [Files]
 Source: "{#DistDir}\GazeFace\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -68,12 +101,22 @@ Source: "{#DistDir}\GazeFace\*"; DestDir: "{app}"; Flags: ignoreversion recurses
 ; prompt, which the standard edition could not operate (updater\*.ps1).
 Source: "updater\gazeface_update.ps1"; DestDir: "{app}\updater"; Flags: ignoreversion
 Source: "updater\register_task.ps1"; DestDir: "{app}\updater"; Flags: ignoreversion
+; Virtual mouse driver: inf + dll + UNSIGNED catalog (full_edition.ps1
+; signs it with the per-PC certificate, then runs gfmouse_setup.ps1).
+; Installed for both editions so the uninstaller always has -Remove.
+Source: "{#DriverPkg}\*"; DestDir: "{app}\driver"; Flags: ignoreversion
+Source: "driver\gfmouse_setup.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion
+; "Start after sign-in": run as the original (non-elevated) user, so it
+; has to be readable by that user - {app}, not the elevated user's {tmp}.
+Source: "setup\at_user_config.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
+; Full edition only: run elevated from CurStepChanged(ssPostInstall).
+Source: "custom\full_edition.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: IsFullEdition
 
 [Icons]
 Name: "{group}\GazeFace"; Filename: "{app}\GazeFace.exe"
 Name: "{autodesktop}\GazeFace"; Filename: "{app}\GazeFace.exe"; Tasks: desktopicon
 
-; Assistive-technology registration (spec 3-6). Registering starts
+; Assistive-technology registration. Registering starts
 ; nothing; the app's Startup settings decide. Same values as
 ; src\at_startup.py admin_script().
 [Registry]
@@ -89,13 +132,13 @@ Root: HKLM64; Subkey: "{#AtKey}"; ValueType: dword; ValueName: "TerminateOnDeskt
 Root: HKLM64; Subkey: "{#AtKey}"; ValueType: dword; ValueName: "CopySettingsToLockedDesktop"; ValueData: 0
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\updater\register_task.ps1"""; Flags: runhidden waituntilterminated
-; runasoriginaluser: without it GazeFace would start elevated and behave
-; differently.
-Filename: "{app}\GazeFace.exe"; Description: "{cm:LaunchApp}"; Flags: postinstall nowait skipifsilent runasoriginaluser
+; Scripts run in a visible console (no runhidden), install and uninstall alike.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\updater\register_task.ps1"""; Flags: waituntilterminated
 
 [UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\updater\register_task.ps1"" -Remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveUpdateTask"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\updater\register_task.ps1"" -Remove"; Flags: waituntilterminated; RunOnceId: "RemoveUpdateTask"
+; Virtual mouse device + driver package (no-op when never installed).
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\driver\gfmouse_setup.ps1"" -Remove"; Flags: waituntilterminated; RunOnceId: "RemoveDriver"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
@@ -104,7 +147,7 @@ Type: filesandordirs; Name: "{app}"
 const
   SubExe = 'gazeface_sub.exe';
 
-{ ---- running GazeFace (spec 3-3 / 4-1) ---- }
+{ ---- running GazeFace ---- }
 
 { PIDs of GazeFace*.exe started from the app folder. Which: 0 = all,
   1 = the watchdog (GazeFace_Sub.exe) only, 2 = everything else. }
@@ -188,22 +231,295 @@ begin
     Result := CustomMessage('StopFailed');
 end;
 
+{ ---- edition page / startup page ---- }
+
+var
+  FullRadio, StandardRadio: TNewRadioButton;
+  StartupPage: TWizardPage;
+  LogonCheck, AfterSigninCheck: TNewCheckBox;
+
+function IsFullEdition: Boolean;
+begin
+  Result := FullRadio.Checked;
+end;
+
+function EditionName: String;
+begin
+  if IsFullEdition then
+    Result := 'full'
+  else
+    Result := 'standard';
+end;
+
+{ Clicking a description selects its option. }
+procedure DescClick(Sender: TObject);
+begin
+  if TNewStaticText(Sender).Tag = 1 then
+    FullRadio.Checked := True
+  else
+    StandardRadio.Checked := True;
+end;
+
+{ Clicking a description toggles its checkbox. }
+procedure CheckDescClick(Sender: TObject);
+begin
+  if TNewStaticText(Sender).Tag = 1 then
+    LogonCheck.Checked := not LogonCheck.Checked
+  else
+    AfterSigninCheck.Checked := not AfterSigninCheck.Checked;
+end;
+
+{ The wrapped description under an option at Top (none when Desc is
+  empty). Returns the Top for the next option. }
+function AddDesc(Page: TWizardPage; Top, Tag: Integer; const Desc: String;
+  OnClick: TNotifyEvent): Integer;
+var
+  L: TNewStaticText;
+begin
+  Result := Top + ScaleY(12);
+  if Desc = '' then
+    Exit;
+  L := TNewStaticText.Create(Page);
+  L.Parent := Page.Surface;
+  L.Tag := Tag;
+  L.AutoSize := False;
+  L.WordWrap := True;
+  L.Left := ScaleX(20);
+  L.Top := Top + ScaleY(2);
+  L.Width := Page.SurfaceWidth - L.Left;
+  L.Caption := Desc;
+  L.AdjustHeight;
+  L.OnClick := OnClick;
+  Result := L.Top + L.Height + ScaleY(16);
+end;
+
+{ A radio button with a wrapped description under it. Returns the Top
+  for the next option. }
+function AddOption(Page: TWizardPage; Top, Tag: Integer;
+  const Caption, Desc: String; var Radio: TNewRadioButton): Integer;
+begin
+  Radio := TNewRadioButton.Create(Page);
+  Radio.Parent := Page.Surface;
+  Radio.Caption := Caption;
+  Radio.Font.Style := [fsBold];
+  Radio.Left := 0;
+  Radio.Top := Top;
+  Radio.Width := Page.SurfaceWidth;
+  Radio.Height := ScaleY(20);
+  Result := AddDesc(Page, Radio.Top + Radio.Height, Tag, Desc, @DescClick);
+end;
+
+{ The same with a checkbox, checked. }
+function AddCheck(Page: TWizardPage; Top, Tag: Integer;
+  const Caption, Desc: String; var Check: TNewCheckBox): Integer;
+begin
+  Check := TNewCheckBox.Create(Page);
+  Check.Parent := Page.Surface;
+  Check.Caption := Caption;
+  Check.Font.Style := [fsBold];
+  Check.Left := 0;
+  Check.Top := Top;
+  Check.Width := Page.SurfaceWidth;
+  Check.Height := ScaleY(20);
+  Check.Checked := True;
+  Result := AddDesc(Page, Check.Top + Check.Height, Tag, Desc, @CheckDescClick);
+end;
+
+procedure InitializeWizard;
+var
+  Page: TWizardPage;
+  Top: Integer;
+  Initial: String;
+begin
+  Page := CreateCustomPage(wpWelcome, CustomMessage('EditionTitle'),
+                           CustomMessage('EditionSub'));
+  Top := AddOption(Page, 0, 1, CustomMessage('FullName'),
+                   CustomMessage('FullDesc'), FullRadio);
+  AddOption(Page, Top, 2, CustomMessage('StandardName'),
+            CustomMessage('StandardDesc'), StandardRadio);
+  { Last install's choice; /EDITION=full|standard overrides it (silent). }
+  Initial := Lowercase(ExpandConstant('{param:EDITION|' +
+                       GetPreviousData('Edition', 'standard') + '}'));
+  FullRadio.Checked := Initial = 'full';
+  StandardRadio.Checked := not FullRadio.Checked;
+
+  { Starting with Windows needs the signed GazeFace_UI.exe: full edition
+    only (ShouldSkipPage). Both checked every time. }
+  StartupPage := CreateCustomPage(Page.ID, CustomMessage('StartupTitle'),
+                                  CustomMessage('StartupSub'));
+  Top := AddCheck(StartupPage, 0, 1, CustomMessage('LogonName'),
+                  CustomMessage('LogonDesc'), LogonCheck);
+  AddCheck(StartupPage, Top, 2, CustomMessage('AfterSigninName'),
+           CustomMessage('AfterSigninDesc'), AfterSigninCheck);
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = StartupPage.ID) and not IsFullEdition;
+end;
+
+procedure RegisterPreviousData(PreviousDataKey: Integer);
+begin
+  SetPreviousData(PreviousDataKey, 'Edition', EditionName);
+end;
+
+{ ---- starting with Windows (same lists as src\at_startup.py) ---- }
+
+{ Add (On) or drop 'gazeface' in the shared, comma-separated
+  Configuration list, keeping every other AT in its order. HKLM = started
+  on the sign-in / lock screen; HKCU = started after sign-in. }
+procedure SetInConfiguration(RootKey: Integer; On: Boolean);
+var
+  V, Item, OutS: String;
+  P: Integer;
+begin
+  if not RegQueryStringValue(RootKey, '{#AccKey}', 'Configuration', V) then
+  begin
+    if not On then
+      Exit;
+    V := '';
+  end;
+  OutS := '';
+  V := V + ',';
+  while Length(V) > 0 do
+  begin
+    P := Pos(',', V);
+    Item := Trim(Copy(V, 1, P - 1));
+    Delete(V, 1, P);
+    if (Item = '') or (CompareText(Item, 'gazeface') = 0) then
+      Continue;
+    if OutS <> '' then
+      OutS := OutS + ',';
+    OutS := OutS + Item;
+  end;
+  if On then
+  begin
+    if OutS <> '' then
+      OutS := OutS + ',';
+    OutS := OutS + 'gazeface';
+  end;
+  RegWriteStringValue(RootKey, '{#AccKey}', 'Configuration', OutS);
+end;
+
+{ The startup page's choices; the standard edition turns both off (its
+  GazeFace_UI.exe is unsigned, so Windows could not start it). HKCU must
+  be the signed-in user's, not the elevated one's: at_user_config.ps1
+  runs as the original user. }
+procedure ApplyStartupOptions;
+var
+  Logon, After: Boolean;
+  RC: Integer;
+  Param: String;
+begin
+  Logon := IsFullEdition and LogonCheck.Checked;
+  After := IsFullEdition and AfterSigninCheck.Checked;
+  SetInConfiguration(HKLM64, Logon);
+  if After then
+    Param := '1'
+  else
+    Param := '0';
+  if not ExecAsOriginalUser(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+       AddQuotes(ExpandConstant('{app}\setup\at_user_config.ps1')) + ' -On ' + Param,
+       '', SW_SHOW, ewWaitUntilTerminated, RC) then
+    Log('at_user_config.ps1 did not start: ' + SysErrorMessage(RC))
+  else if RC <> 0 then
+    Log('at_user_config.ps1 exit code ' + IntToStr(RC));
+end;
+
 { ---- install ---- }
+
+{ custom\full_edition.ps1, elevated (the installer runs as admin), in a
+  visible console so the script can show progress or ask questions. On
+  failure the script may leave its error text (UTF-8) in
+  full_edition_error.txt next to itself; it is shown in the error box. }
+procedure RunFullEditionScript;
+var
+  RC, I: Integer;
+  Msg: String;
+  Lines: TArrayOfString;
+begin
+  WizardForm.StatusLabel.Caption := CustomMessage('RunningFull');
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+              '-NoProfile -ExecutionPolicy Bypass -File ' +
+              AddQuotes(ExpandConstant('{tmp}\full_edition.ps1')) +
+              ' -AppDir ' + AddQuotes(ExpandConstant('{app}')) +
+              ' -Language ' + ActiveLanguage,
+              '', SW_SHOW, ewWaitUntilTerminated, RC) then
+    Log('full_edition.ps1 did not start: ' + SysErrorMessage(RC))
+  else if RC = 0 then
+    Exit
+  else
+    Log('full_edition.ps1 exit code ' + IntToStr(RC));
+  Msg := FmtMessage(CustomMessage('FullFailed'), [IntToStr(RC)]);
+  if LoadStringsFromFile(ExpandConstant('{tmp}\full_edition_error.txt'), Lines) then
+  begin
+    Msg := Msg + #13#10;
+    for I := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Log('full_edition.ps1: ' + Lines[I]);
+      Msg := Msg + #13#10 + Lines[I];
+    end;
+  end;
+  SuppressibleMsgBox(Msg, mbError, MB_OK, IDOK);
+end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  { The chosen language becomes the app's first-run language (spec 5).
-    ASCII only, so no BOM is written. }
   if CurStep = ssPostInstall then
+  begin
+    { The chosen language becomes the app's first-run language
+      (install_defaults.json, read by src\paths.py).
+      ASCII only, so no BOM is written. }
     SaveStringToFile(ExpandConstant('{app}\install_defaults.json'),
                      '{"language": "' + ActiveLanguage + '"}', False);
+    if IsFullEdition then
+      RunFullEditionScript;
+    ApplyStartupOptions;
+  end;
 end;
 
-procedure CurPageChanged(CurPageID: Integer);
+{ Task "launchapp": as the original user (elevated, GazeFace would behave
+  differently). Not in silent installs. }
+procedure LaunchApp;
+var
+  RC: Integer;
 begin
+  if WizardSilent or not WizardIsTaskSelected('launchapp') then
+    Exit;
+  if not ExecAsOriginalUser(ExpandConstant('{app}\GazeFace.exe'), '',
+                            ExpandConstant('{app}'), SW_SHOWNORMAL,
+                            ewNoWait, RC) then
+    Log('GazeFace.exe did not start: ' + SysErrorMessage(RC));
+end;
+
+var
+  LaunchDefaulted: Boolean;
+
+{ Tasks page: "start GazeFace" is checked every time, not restored from
+  the last install (other tasks keep their previous state); once only, so
+  going Back keeps what the user chose. Finish page: start GazeFace
+  (before Finish is clicked), then the note from custom\texts.iss; empty
+  keeps Inno Setup's own text. }
+procedure CurPageChanged(CurPageID: Integer);
+var
+  Note: String;
+begin
+  if (CurPageID = wpSelectTasks) and not LaunchDefaulted then
+  begin
+    WizardSelectTasks('launchapp');
+    LaunchDefaulted := True;
+  end;
   if CurPageID = wpFinished then
   begin
-    WizardForm.FinishedLabel.Caption := CustomMessage('DoneStandard');
+    LaunchApp;
+    if IsFullEdition then
+      Note := CustomMessage('DoneFull')
+    else
+      Note := CustomMessage('DoneStandard');
+    if Note = '' then
+      Exit;
+    WizardForm.FinishedLabel.Caption := Note;
     WizardForm.FinishedLabel.AdjustHeight;
     WizardForm.RunList.Top := WizardForm.FinishedLabel.Top +
       WizardForm.FinishedLabel.Height + ScaleY(12);
@@ -219,37 +535,12 @@ begin
     MsgBox(CustomMessage('StopFailed'), mbError, MB_OK);
 end;
 
-{ Drop 'gazeface' from the shared, comma-separated Configuration list,
-  keeping every other AT in its order (spec 4-2). }
-procedure RemoveFromConfiguration(RootKey: Integer);
-var
-  V, Item, OutS: String;
-  P: Integer;
-begin
-  if not RegQueryStringValue(RootKey, '{#AccKey}', 'Configuration', V) then
-    Exit;
-  OutS := '';
-  V := V + ',';
-  while Length(V) > 0 do
-  begin
-    P := Pos(',', V);
-    Item := Trim(Copy(V, 1, P - 1));
-    Delete(V, 1, P);
-    if (Item = '') or (CompareText(Item, 'gazeface') = 0) then
-      Continue;
-    if OutS <> '' then
-      OutS := OutS + ',';
-    OutS := OutS + Item;
-  end;
-  RegWriteStringValue(RootKey, '{#AccKey}', 'Configuration', OutS);
-end;
-
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
-    RemoveFromConfiguration(HKLM64);
-    RemoveFromConfiguration(HKCU);
+    SetInConfiguration(HKLM64, False);
+    SetInConfiguration(HKCU, False);
   end;
   if CurUninstallStep = usPostUninstall then
     if not UninstallSilent then

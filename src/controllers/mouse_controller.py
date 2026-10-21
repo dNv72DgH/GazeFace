@@ -204,16 +204,17 @@ def _reveal_cursor() -> None:
         _suppress_nudged = True
         # Windows does not take SendInput as "a mouse moved" here: the
         # (0, 0) nudge below went out after sign-in and the pointer stayed
-        # hidden until the physical mouse was touched. The vmulti virtual
-        # mouse IS a mouse to Windows, and this wake is the only thing the
-        # app uses it for (src/vmulti_wake.py). Off the mouse thread: the
-        # device lookup takes a moment. Without the driver it does
-        # nothing, and the SendInput nudge still goes out as before.
-        logging.info("Pointer is suppressed by Windows - waking it (vmulti "
-                     "if installed, plus the (0, 0) nudge)")
+        # hidden until the physical mouse was touched. GazeFace's virtual
+        # mouse (driver/gfmouse) IS a mouse to Windows, and this wake is
+        # the only thing the app uses it for (src/pointer_wake.py). Off the
+        # mouse thread: the device lookup takes a moment. Without the
+        # driver it does nothing, and the SendInput nudge still goes out
+        # as before.
+        logging.info("Pointer is suppressed by Windows - waking it "
+                     "(virtual mouse if installed, plus the (0, 0) nudge)")
         try:
-            from src import vmulti_wake
-            threading.Thread(target=vmulti_wake.wake_pointer,
+            from src import pointer_wake
+            threading.Thread(target=pointer_wake.wake_pointer,
                              name="PointerWake", daemon=True).start()
         except Exception as e:
             logging.warning("pointer wake failed to start: %s", e)

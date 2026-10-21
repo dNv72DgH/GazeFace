@@ -11,19 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Show a pointer Windows is hiding, with one report from a virtual
-mouse (GazeFace's own UMDF driver, or vmulti). That is ALL this module
+"""Show a pointer Windows is hiding, with one report from GazeFace's
+virtual mouse (driver/gfmouse, a UMDF HID driver). That - and saying
+whether the driver is there, for the About page - is ALL this module
 does.
 
 After sign-in Windows keeps the pointer suppressed (CURSOR_SUPPRESSED)
 until a mouse moves, and it does not count SendInput as a mouse moving:
 the (0, 0) SendInput nudge in mouse_controller was logged going out and
-the pointer stayed hidden until the physical mouse was touched. vmulti is
-a virtual HID device - to Windows it IS a mouse - so one report from it
-ends the suppression the way the physical mouse does.
+the pointer stayed hidden until the physical mouse was touched. The
+virtual mouse is a HID device - to Windows it IS a mouse - so one report
+from it ends the suppression the way the physical mouse does.
 
-Deliberately narrow (the user's condition for using the driver at all):
-  * nothing else in the app sends input through vmulti - clicks, moves
+Deliberately narrow (the user's condition for using a driver at all):
+  * nothing else in the app sends input through it - clicks, moves
     and the wheel all stay on SendInput;
   * one wake = two absolute reports: 1 px aside, then back to where the
     pointer was, no buttons. The pointer ends where it started;
@@ -32,16 +33,10 @@ Deliberately narrow (the user's condition for using the driver at all):
   * no driver, or any failure: nothing happens, and the caller carries
     on exactly as before.
 
-Devices, both found by their control collection (usage page 0xFF00
-usage 1); X and Y are 0..0x7FFF over the whole virtual desktop,
-little-endian:
-  * gfmouse (driver/gfmouse, UMDF - preferred; VID 0x1209 PID 0x0007):
-    WriteFile of 5 bytes: [0]=0x02, [1:3] X, [3:5] Y. The driver has no
-    way to press a button.
-  * vmulti (xaviersykora/vmulti-win11, kernel; VID 0x00FF PID 0xBACC):
-    WriteFile of 0x41 bytes: [0]=0x40 control report, [1]=7 payload
-    length, [2]=0x03 mouse report, [3]=buttons, [4:6] X, [6:8] Y,
-    [8]=wheel.
+The device (VID 0x1209 PID 0x0007) is found by its control collection
+(usage page 0xFF00 usage 1). A report is a WriteFile of 5 bytes: [0]=0x02,
+[1:3] X, [3:5] Y, each 0..0x7FFF over the whole virtual desktop,
+little-endian. The driver has no way to press a button.
 """
 
 import ctypes
@@ -49,12 +44,12 @@ import logging
 import time
 from ctypes import wintypes
 
-logger = logging.getLogger("VMultiWake")
+logger = logging.getLogger("PointerWake")
 
 GFMOUSE = "gfmouse"
-VMULTI = "vmulti"
-# kind -> (VID, PID), in order of preference
-DEVICES = {GFMOUSE: (0x1209, 0x0007), VMULTI: (0x00FF, 0xBACC)}
+# kind -> (VID, PID)
+DEVICES = {GFMOUSE: (0x1209, 0x0007)}
+HARDWARE_ID = r"Root\GazeFaceMouse"
 CONTROL_USAGE_PAGE = 0xFF00
 CONTROL_USAGE = 0x0001
 ABS_MAX = 0x7FFF
@@ -242,7 +237,7 @@ def _open_control():
 
 def _virtual_bounds():
     """(left, top, width, height) of the whole desktop in real pixels -
-    the rectangle vmulti's 0..0x7FFF range spans."""
+    the rectangle the 0..0x7FFF range spans."""
     left = top = right = bottom = None
     i = 0
     while True:
@@ -280,10 +275,7 @@ def _to_abs(x, y, b):
 
 def _report_bytes(kind, ax, ay):
     pos = bytes((ax & 0xFF, (ax >> 8) & 0xFF, ay & 0xFF, (ay >> 8) & 0xFF))
-    if kind == GFMOUSE:
-        return b"\x02" + pos
-    # vmulti: control, payload length, mouse report, no buttons, ever
-    return (b"\x40\x07\x03\x00" + pos).ljust(0x41, b"\x00")
+    return b"\x02" + pos
 
 
 def _report(h, kind, ax, ay):
@@ -345,3 +337,34 @@ def wake_pointer() -> bool:
                 _u32.SetThreadDpiAwarenessContext(ctypes.c_void_p(prev))
             except Exception:
                 pass
+
+
+def driver_status() -> str:
+    """One line for the About page: is the virtual mouse installed and
+    usable? Slow-ish (a WMI query), so call it off the UI thread."""
+    try:
+        opened = _open_control()
+    except Exception:
+        opened = None
+    if opened is not None:
+        _k32.CloseHandle(opened[0])
+        return "Installed, working"
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-CimInstance Win32_PnPEntity | Where-Object { "
+             "$_.HardwareID -contains '%s' } | ForEach-Object { "
+             "$_.ConfigManagerErrorCode }" % HARDWARE_ID],
+            capture_output=True, text=True, timeout=20,
+            creationflags=0x08000000).stdout.split()
+    except Exception as e:
+        logger.debug("driver status query failed: %s", e)
+        return "Unknown"
+    if not out:
+        return "Not installed"
+    if out[0] != "0":
+        return "Installed, not working (device error %s)" % out[0]
+    # The device is fine but its control interface could not be opened:
+    # typically its vendor-defined HID collection was disabled.
+    return "Installed, control interface unavailable"

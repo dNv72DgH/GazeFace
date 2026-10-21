@@ -33,10 +33,6 @@ While it runs, GazeFace checks for a new version once a day and offers it inside
 
 To uninstall, use Settings → Apps.
 
-### Controlling elevated windows (optional)
-
-To control windows that run as administrator, the UIAccess build (`GazeFace_UI.exe`) has to be installed under Program Files and signed with a code-signing certificate the machine trusts. See `tools/install_uiaccess.ps1` (pass your certificate with `-Thumbprint`).
-
 ## Privacy
 
 - Camera images are processed on your PC only. They are never stored or sent anywhere.

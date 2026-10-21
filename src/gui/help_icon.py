@@ -114,11 +114,10 @@ HELP_TEXTS = {
     # ---- Advanced: startup ----
     "At sign-in": (
         "At sign-in (starts on the sign-in screen etc.)",
-        "Starts an ultra-light version just for signing in, meant only "
-        "for typing with the on-screen keyboard. Only mouse operation, "
-        "Gaze Jump and Gaze move can be used. The Gaze Jump and Gaze move "
-        "animations are not drawn.\nNot available in the portable "
-        "version or in some environments."),
+        "Starts an ultra-light version just for signing in to Windows, "
+        "meant only for typing with the on-screen keyboard. Only mouse "
+        "operation, Gaze Jump and Gaze move can be used. The Gaze Jump and "
+        "Gaze move animations are not drawn."),
     # ---- task switcher: hidden tasks ----
     "Window title": (
         "Window title",

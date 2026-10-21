@@ -36,11 +36,18 @@ the process at all when they do not:
 A user-profile install can therefore never run the UIAccess build. That
 is checked here up front so the setting can explain itself instead of
 failing silently at the next restart.
+
+When it CAN run, it is used: there is nothing to switch on. The build is
+chosen app-wide (not per profile - a profile switch must not change what
+Windows lets the app do), from the "ui_access" key of default.json, which
+defaults to on and exists only so it can be turned off by hand.
 """
 
+import ctypes
 import logging
 import os
 import sys
+from ctypes import wintypes
 
 logger = logging.getLogger("UIAccess")
 
@@ -102,9 +109,9 @@ def active() -> bool:
 def wanted() -> bool:
     try:
         from src.config_manager import ConfigManager
-        return bool(ConfigManager().config.get(CONFIG_KEY, False))
+        return bool(ConfigManager()._read_app_setting(CONFIG_KEY, True))
     except Exception:
-        return False
+        return True
 
 
 def blocker() -> str:
@@ -126,6 +133,8 @@ def blocker() -> str:
                 % install_dir())
     if not _is_signed(exe):
         return t("%s is not signed") % UIACCESS_EXE
+    if not _is_trusted(exe):
+        return t("%s is not signed by a trusted certificate") % UIACCESS_EXE
     return ""
 
 
@@ -156,6 +165,78 @@ def _is_signed(exe) -> bool:
         return bool(rva and size)
     except Exception as e:
         logger.debug("signature probe failed: %s", e)
+        return False
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+
+class _WINTRUST_FILE_INFO(ctypes.Structure):
+    _fields_ = [("cbStruct", wintypes.DWORD),
+                ("pcwszFilePath", wintypes.LPCWSTR),
+                ("hFile", wintypes.HANDLE),
+                ("pgKnownSubject", ctypes.c_void_p)]
+
+
+class _WINTRUST_DATA(ctypes.Structure):
+    _fields_ = [("cbStruct", wintypes.DWORD),
+                ("pPolicyCallbackData", ctypes.c_void_p),
+                ("pSIPClientData", ctypes.c_void_p),
+                ("dwUIChoice", wintypes.DWORD),
+                ("fdwRevocationChecks", wintypes.DWORD),
+                ("dwUnionChoice", wintypes.DWORD),
+                ("pFile", ctypes.POINTER(_WINTRUST_FILE_INFO)),
+                ("dwStateAction", wintypes.DWORD),
+                ("hWVTStateData", wintypes.HANDLE),
+                ("pwszURLReference", wintypes.LPCWSTR),
+                ("dwProvFlags", wintypes.DWORD),
+                ("dwUIContext", wintypes.DWORD),
+                ("pSignatureSettings", ctypes.c_void_p)]
+
+
+# WINTRUST_ACTION_GENERIC_VERIFY_V2
+_VERIFY_V2 = _GUID(0x00AAC56B, 0xCD44, 0x11D0,
+                   (ctypes.c_ubyte * 8)(0x8C, 0xC2, 0x00, 0xC0,
+                                        0x4F, 0xC2, 0x95, 0xEE))
+
+
+def _is_trusted(exe) -> bool:
+    """Does Windows trust the exe's signature (WinVerifyTrust)?
+
+    The presence check above is not enough to switch on: an exe signed
+    by a certificate this machine does not trust is refused at launch,
+    and a start-up that switched to it would fail every time. Offline
+    only (no revocation check, cached URLs only) - this runs at start-up.
+    """
+    try:
+        wt = ctypes.WinDLL("wintrust")
+        wt.WinVerifyTrust.restype = ctypes.c_long
+        wt.WinVerifyTrust.argtypes = [wintypes.HWND, ctypes.POINTER(_GUID),
+                                      ctypes.POINTER(_WINTRUST_DATA)]
+        fi = _WINTRUST_FILE_INFO(ctypes.sizeof(_WINTRUST_FILE_INFO),
+                                 str(exe), None, None)
+        wd = _WINTRUST_DATA()
+        wd.cbStruct = ctypes.sizeof(wd)
+        wd.dwUIChoice = 2                 # WTD_UI_NONE
+        wd.fdwRevocationChecks = 0        # WTD_REVOKE_NONE
+        wd.dwUnionChoice = 1              # WTD_CHOICE_FILE
+        wd.pFile = ctypes.pointer(fi)
+        wd.dwStateAction = 1              # WTD_STATEACTION_VERIFY
+        wd.dwProvFlags = 0x1000           # WTD_CACHE_ONLY_URL_RETRIEVAL
+        guid = _GUID(_VERIFY_V2.Data1, _VERIFY_V2.Data2, _VERIFY_V2.Data3,
+                     _VERIFY_V2.Data4)
+        hwnd = wintypes.HWND(-1)          # INVALID_HANDLE_VALUE: no UI
+        rc = wt.WinVerifyTrust(hwnd, ctypes.byref(guid), ctypes.byref(wd))
+        wd.dwStateAction = 2              # WTD_STATEACTION_CLOSE
+        wt.WinVerifyTrust(hwnd, ctypes.byref(guid), ctypes.byref(wd))
+        if rc != 0:
+            logger.info("%s signature not trusted (0x%08X)",
+                        os.path.basename(str(exe)), rc & 0xFFFFFFFF)
+        return rc == 0
+    except Exception as e:
+        logger.debug("trust check failed: %s", e)
         return False
 
 

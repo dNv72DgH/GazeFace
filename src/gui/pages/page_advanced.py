@@ -502,14 +502,15 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         from src import paths
         try:
             from src import ui_access
-            edition = "UIAccess" if ui_access.active() else "Standard"
+            edition = ("Full Edition" if ui_access.active()
+                       else "Standard Edition")
         except Exception:
-            edition = "Standard"
+            edition = "Standard Edition"
 
         rows = [
             ("Version", ConfigManager().version),
             ("Edition", edition),
-            ("Copyright", "© 2026 Nito Ninomae @12monkeys_nito"),
+            ("Copyright", "© 2026 Nito Ninomae @12monkeys_nito(X/twitter)"),
             ("License", "Apache License 2.0"),
             ("Based on", "Project Gameface by Google LLC "
                          "(Apache License 2.0)"),
@@ -522,16 +523,20 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             ("Settings folder", str(paths.user_data_dir())),
             ("System", "Windows %s, Python %s" % (
                 platform.version(), platform.python_version())),
+            # Filled in below: the lookup takes a moment.
+            ("Virtual mouse driver", "Checking..."),
         ]
         table = customtkinter.CTkFrame(body, fg_color="transparent")
         table.pack(padx=20, pady=(10, 4), anchor="w")
+        values = {}
         for i, (name, value) in enumerate(rows):
             customtkinter.CTkLabel(table, text=name, anchor="nw").grid(
                 row=i, column=0, sticky="nw", padx=(0, 16), pady=1)
-            customtkinter.CTkLabel(table, text=value, anchor="nw",
-                                   justify=tkinter.LEFT,
-                                   wraplength=460).grid(
-                row=i, column=1, sticky="nw", pady=1)
+            values[name] = customtkinter.CTkLabel(
+                table, text=value, anchor="nw", justify=tkinter.LEFT,
+                wraplength=460)
+            values[name].grid(row=i, column=1, sticky="nw", pady=1)
+        self._fill_driver_status(values["Virtual mouse driver"])
 
         brow = customtkinter.CTkFrame(body, fg_color="transparent")
         brow.pack(padx=20, pady=(8, 20), anchor="w")
@@ -544,6 +549,32 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             brow, text="View license notices", width=180,
             command=lambda: self._open_path(
                 os.path.join(base, "NOTICE"))).pack(side="left")
+
+    def _fill_driver_status(self, label):
+        """GazeFace's virtual mouse (driver/gfmouse): installed, working?
+        Looked up off the UI thread; the label may be gone by then."""
+        import threading
+
+        def work():
+            try:
+                from src import pointer_wake
+                text = pointer_wake.driver_status()
+            except Exception as e:
+                logger.error("driver status: %s", e)
+                text = "Unknown"
+
+            def show():
+                try:
+                    if label.winfo_exists():
+                        label.configure(text=text)
+                except Exception:
+                    pass
+            try:
+                self.after(0, show)
+            except Exception:
+                pass
+        threading.Thread(target=work, name="DriverStatus",
+                         daemon=True).start()
 
     @staticmethod
     def _open_path(path):
