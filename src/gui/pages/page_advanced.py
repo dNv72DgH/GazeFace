@@ -96,6 +96,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         # self._build_overlay_section()
         self._build_recovery_section()
         self._build_language_section()
+        self._build_update_section()
         self._build_about_section()
 
         self.load_initial_config()
@@ -280,6 +281,21 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         lang_dropdown.set("日本語" if i18n.get_language() == "ja" else "English")
         self._grid(lang_dropdown)
         self.lang_dropdown = lang_dropdown
+
+    # ---------------------------------------------------------------- #
+    # Updates (app-wide)
+    # ---------------------------------------------------------------- #
+
+    def _build_update_section(self):
+        from src import updater
+        self._section(t("Updates"))
+        self.update_notify_var = tkinter.BooleanVar(
+            value=updater.notify_enabled())
+        self._grid(customtkinter.CTkCheckBox(
+            master=self, text=t("Notify me of updates"),
+            variable=self.update_notify_var, onvalue=True, offvalue=False,
+            command=lambda: ConfigManager().write_app_setting(
+                updater.NOTIFY_KEY, bool(self.update_notify_var.get()))))
 
     # ---------------------------------------------------------------- #
     # Diagnostics (verbose logging, open log folder)

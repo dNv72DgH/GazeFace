@@ -618,6 +618,14 @@ JA = {
     "Sensitivity": "検出感度",
     "About GazeFace": "GazeFaceについて",
     "GazeFace update": "GazeFace の更新",
+    "Updates": "更新",
+    "Notify me of updates": "更新を通知する",
+    "Updating GazeFace... It starts again by itself when the update is done.":
+        "GazeFace を更新しています… 更新が終わると自動で起動します。",
+    "Starting GazeFace...": "GazeFace を起動しています…",
+    "The update failed. Starting GazeFace...": "更新に失敗しました。GazeFace を起動しています…",
+    "Installing the update... GazeFace closes for a moment and starts again by itself.":
+        "更新をインストールしています… GazeFace が一度終了し、自動で起動します。",
     "GazeFace %s is available.": "GazeFace %s があります。",
     "While it updates, GazeFace closes for a moment and then starts again by itself.":
         "更新中は GazeFace が一度終了し、終わると自動で起動します。",

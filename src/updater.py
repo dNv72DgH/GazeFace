@@ -62,6 +62,7 @@ SNOOZE_S = 24 * 3600
 NOTES_MAX_AGE_S = 24 * 3600
 
 LAST_CHECK_KEY = "update_last_check"
+NOTIFY_KEY = "update_notify"
 SNOOZE_KEY = "update_snooze"
 
 CREATE_NO_WINDOW = 0x08000000
@@ -141,7 +142,19 @@ def _snoozed(version):
             and time.time() < float(s.get("until", 0)))
 
 
+def notify_enabled() -> bool:
+    """Advanced settings > Updates > "Notify me of updates" (app-wide,
+    on by default). Read at every check, so switching it applies at once."""
+    try:
+        return bool(_setting(NOTIFY_KEY, True))
+    except Exception:
+        return True
+
+
 def _check_once(tk_root):
+    if not notify_enabled():
+        logger.info("update check skipped: notifications are off")
+        return
     try:
         rel = fetch_latest()
     except Exception as e:
@@ -170,10 +183,13 @@ def _loop(tk_root):
     except (TypeError, ValueError):
         last = 0
     gap = time.time() - last
-    # A self-restart is a start too, and those can come often: the start
-    # check is skipped when one ran within the hour (not when testing).
+    # Every start the user makes checks. Self-restarts (auto recovery,
+    # restart.py passes --wait-pid) can come often, so those skip the
+    # start check when one ran within the hour (not when testing).
+    self_restart = "--wait-pid" in sys.argv
     delay = (FIRST_DELAY_S
-             if gap >= STARTUP_MIN_GAP_S or os.environ.get(API_ENV)
+             if (not self_restart or gap >= STARTUP_MIN_GAP_S
+                 or os.environ.get(API_ENV))
              else max(FIRST_DELAY_S, INTERVAL_S - gap))
     logger.info("next update check in %d s", delay)
     while True:
@@ -221,31 +237,83 @@ def _spawn_relauncher(stamp):
     once, so it is nobody's child when the installer stops GazeFace's
     process tree. Gives up after 2 minutes if the task never starts, and
     starts nothing while a GazeFace is running (the update failed before
-    the setup program stopped it)."""
+    the setup program stopped it).
+
+    While GazeFace is closed for the install there is nothing of it on
+    screen, which looked like it had simply vanished. So from the moment
+    the install begins this helper shows a small window with a running
+    bar ("updating, GazeFace starts again by itself") until GazeFace is
+    back. It needs no input and closes itself."""
     app = paths.install_dir()
-    script = """
+    script = r"""
 $r = %s; $exe = %s; $dir = %s; $t0 = [int64]%d
-$deadline = (Get-Date).AddSeconds(120); $seen = $false
+$title = %s; $busy = %s; $starting = %s; $failed = %s
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+$form = $null; $label = $null
+function Show-Busy([string]$text) {
+  if (-not $script:form) {
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = $title; $f.FormBorderStyle = 'FixedDialog'; $f.ControlBox = $false
+    $f.StartPosition = 'CenterScreen'; $f.ClientSize = New-Object System.Drawing.Size(460, 120)
+    $f.TopMost = $true; $f.ShowInTaskbar = $true
+    $f.Font = New-Object System.Drawing.Font('Segoe UI', 11)
+    $l = New-Object System.Windows.Forms.Label
+    $l.SetBounds(20, 16, 420, 52)
+    $f.Controls.Add($l)
+    $p = New-Object System.Windows.Forms.ProgressBar
+    $p.Style = 'Marquee'; $p.MarqueeAnimationSpeed = 30; $p.SetBounds(20, 78, 420, 20)
+    $f.Controls.Add($p)
+    $f.Show()
+    $script:form = $f; $script:label = $l
+  }
+  $script:label.Text = $text
+  [System.Windows.Forms.Application]::DoEvents()
+}
+function Wait-A-Bit([int]$ms) {
+  for ($i = 0; $i -lt ($ms / 100); $i++) {
+    if ($script:form) { [System.Windows.Forms.Application]::DoEvents() }
+    Start-Sleep -Milliseconds 100
+  }
+}
+$deadline = (Get-Date).AddSeconds(120); $seen = $false; $j = $null
 while ($true) {
-  Start-Sleep -Seconds 2
+  Wait-A-Bit 1000
   $j = $null
   try {
-    if ((Get-Item -LiteralPath $r).LastWriteTimeUtc.ToFileTimeUtc() -gt $t0) {
+    if ((Get-Item -LiteralPath $r -ErrorAction Stop).LastWriteTimeUtc.ToFileTimeUtc() -gt $t0) {
       $j = Get-Content -LiteralPath $r -Raw | ConvertFrom-Json
     }
   } catch {}
   if ($j) {
     if (@('ok', 'uptodate', 'failed') -contains $j.status) { break }
     if (-not $seen) { $seen = $true; $deadline = (Get-Date).AddMinutes(30) }
+    # The setup program stops GazeFace once it starts installing.
+    if ($j.status -eq 'installing' -and -not (Get-Process -Name GazeFace -ErrorAction SilentlyContinue)) {
+      Show-Busy $busy
+    }
   }
   if ((Get-Date) -gt $deadline) { if ($seen) { break } else { exit } }
 }
-Start-Sleep -Seconds 2
 if (-not (Get-Process -Name GazeFace -ErrorAction SilentlyContinue)) {
+  if ($j -and $j.status -eq 'failed') { $text = $failed } else { $text = $starting }
+  Show-Busy $text
+  Wait-A-Bit 2000
   Start-Process -FilePath $exe -WorkingDirectory $dir
+  # Keep the window up until GazeFace has a window of its own (max 60 s).
+  for ($i = 0; $i -lt 60; $i++) {
+    Wait-A-Bit 1000
+    $g = Get-Process -Name GazeFace -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }
+    if ($g) { break }
+  }
 }
+if ($form) { $form.Close() }
 """ % (_ps_quote(_updater_dir() / "result.json"),
-       _ps_quote(app / "GazeFace.exe"), _ps_quote(app), int(stamp))
+       _ps_quote(app / "GazeFace.exe"), _ps_quote(app), int(stamp),
+       _ps_quote(t("GazeFace update")),
+       _ps_quote(t("Updating GazeFace... It starts again by itself when "
+                   "the update is done.")),
+       _ps_quote(t("Starting GazeFace...")),
+       _ps_quote(t("The update failed. Starting GazeFace...")))
     inner = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     outer = ("Start-Process -WindowStyle Hidden -FilePath powershell.exe "
              "-ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy',"
@@ -514,7 +582,8 @@ class UpdateBanner:
                           % int(frac * 100))
             elif st == "installing":
                 self._bar(-1)
-                self._say(t("Installing the update..."))
+                self._say(t("Installing the update... GazeFace closes for "
+                            "a moment and starts again by itself."))
             elif st == "running":
                 self._bar(-1)
                 self._say(t("Preparing the update..."))

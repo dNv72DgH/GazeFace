@@ -237,10 +237,36 @@ var
   FullRadio, StandardRadio: TNewRadioButton;
   StartupPage: TWizardPage;
   LogonCheck, AfterSigninCheck: TNewCheckBox;
+  { The edition of the install being updated ('' when there is none),
+    read before this install records its own. }
+  PrevEdition: String;
 
 function IsFullEdition: Boolean;
 begin
   Result := FullRadio.Checked;
+end;
+
+{ Is 'gazeface' in RootKey's Configuration list (started with Windows)? }
+function InConfiguration(RootKey: Integer): Boolean;
+var
+  V, Item: String;
+  P: Integer;
+begin
+  Result := False;
+  if not RegQueryStringValue(RootKey, '{#AccKey}', 'Configuration', V) then
+    Exit;
+  V := V + ',';
+  while Length(V) > 0 do
+  begin
+    P := Pos(',', V);
+    Item := Trim(Copy(V, 1, P - 1));
+    Delete(V, 1, P);
+    if CompareText(Item, 'gazeface') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
 end;
 
 function EditionName: String;
@@ -338,19 +364,29 @@ begin
   AddOption(Page, Top, 2, CustomMessage('StandardName'),
             CustomMessage('StandardDesc'), StandardRadio);
   { Last install's choice; /EDITION=full|standard overrides it (silent). }
-  Initial := Lowercase(ExpandConstant('{param:EDITION|' +
-                       GetPreviousData('Edition', 'standard') + '}'));
+  PrevEdition := Lowercase(GetPreviousData('Edition', ''));
+  Initial := PrevEdition;
+  if Initial = '' then
+    Initial := 'standard';
+  Initial := Lowercase(ExpandConstant('{param:EDITION|' + Initial + '}'));
   FullRadio.Checked := Initial = 'full';
   StandardRadio.Checked := not FullRadio.Checked;
 
   { Starting with Windows needs the signed GazeFace_UI.exe: full edition
-    only (ShouldSkipPage). Both checked every time. }
+    only (ShouldSkipPage). Checked on a new install; when a full edition
+    is being updated, they start from what is set now (the user may have
+    changed them in GazeFace since). }
   StartupPage := CreateCustomPage(Page.ID, CustomMessage('StartupTitle'),
                                   CustomMessage('StartupSub'));
   Top := AddCheck(StartupPage, 0, 1, CustomMessage('LogonName'),
                   CustomMessage('LogonDesc'), LogonCheck);
   AddCheck(StartupPage, Top, 2, CustomMessage('AfterSigninName'),
            CustomMessage('AfterSigninDesc'), AfterSigninCheck);
+  if PrevEdition = 'full' then
+  begin
+    LogonCheck.Checked := InConfiguration(HKLM64);
+    AfterSigninCheck.Checked := InConfiguration(HKCU);
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -475,7 +511,11 @@ begin
                      '{"language": "' + ActiveLanguage + '"}', False);
     if IsFullEdition then
       RunFullEditionScript;
-    ApplyStartupOptions;
+    { A silent update of the same edition (GazeFace's own updater) leaves
+      the startup settings as the user last set them. It also runs as
+      SYSTEM, whose HKCU is not the user's. }
+    if not (WizardSilent and (PrevEdition = EditionName)) then
+      ApplyStartupOptions;
   end;
 end;
 
