@@ -22,8 +22,10 @@ foreach ($store in 'Root', 'TrustedPublisher') {
 }
 
 # コード署名専用の証明書を作る
+# 鍵は LocalMachine\My に置く（管理者と SYSTEM しか触れない。
+# CurrentUser\My だと、削除までの間に同じユーザーの他のプログラムが読める）
 $cert = New-SelfSignedCertificate -Subject $name -Type CodeSigningCert `
-  -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(10)
+  -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(10)
 
 try {
     # 証明書をこの PC で信頼済みにする
@@ -42,7 +44,7 @@ try {
 finally {
     # 秘密鍵ごと削除する（以後、この証明書では何にも署名できなくなる）
     # 途中で失敗しても、鍵だけは必ず消す
-    Remove-Item -LiteralPath ('Cert:\CurrentUser\My\' + $cert.Thumbprint) -DeleteKey
+    Remove-Item -LiteralPath ('Cert:\LocalMachine\My\' + $cert.Thumbprint) -DeleteKey
 }
 
 # 結果を確認する（Valid 以外は失敗として catch へ）
