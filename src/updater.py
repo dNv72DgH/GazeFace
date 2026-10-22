@@ -236,8 +236,9 @@ def _spawn_relauncher(stamp):
     GazeFace again. Started through a second PowerShell that exits at
     once, so it is nobody's child when the installer stops GazeFace's
     process tree. Gives up after 2 minutes if the task never starts, and
-    starts nothing while a GazeFace is running (the update failed before
-    the setup program stopped it).
+    starts nothing while a GazeFace of this install is running (the
+    update failed before the setup program stopped it). Copies run from
+    other folders are ignored: the setup program does not stop them.
 
     While GazeFace is closed for the install there is nothing of it on
     screen, which looked like it had simply vanished. So from the moment
@@ -269,6 +270,31 @@ function Show-Busy([string]$text) {
   $script:label.Text = $text
   [System.Windows.Forms.Application]::DoEvents()
 }
+# GazeFace from THIS install only (either exe): a copy run from another
+# folder is not stopped by the setup program and must not count. The path
+# comes from QueryFullProcessImageName with limited-query rights: .Path is
+# empty for the UIAccess build when asked from a normal process.
+Add-Type -Namespace GfUpd -Name Img -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern System.IntPtr OpenProcess(int access, bool inherit, int pid);
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern bool QueryFullProcessImageNameW(System.IntPtr h, int flags, System.Text.StringBuilder name, ref int size);
+[DllImport("kernel32.dll")]
+public static extern bool CloseHandle(System.IntPtr h);
+'@
+function Get-ImagePath([int]$procId) {
+  $h = [GfUpd.Img]::OpenProcess(0x1000, $false, $procId)
+  if ($h -eq [IntPtr]::Zero) { return '' }
+  try {
+    $sb = New-Object System.Text.StringBuilder 1024; $n = 1024
+    if ([GfUpd.Img]::QueryFullProcessImageNameW($h, 0, $sb, [ref]$n)) { return $sb.ToString() }
+    return ''
+  } finally { [void][GfUpd.Img]::CloseHandle($h) }
+}
+function Get-Ours {
+  Get-Process -Name GazeFace, GazeFace_UI -ErrorAction SilentlyContinue |
+    Where-Object { (Get-ImagePath $_.Id).StartsWith($dir + '\', [StringComparison]::OrdinalIgnoreCase) }
+}
 function Wait-A-Bit([int]$ms) {
   for ($i = 0; $i -lt ($ms / 100); $i++) {
     if ($script:form) { [System.Windows.Forms.Application]::DoEvents() }
@@ -288,13 +314,13 @@ while ($true) {
     if (@('ok', 'uptodate', 'failed') -contains $j.status) { break }
     if (-not $seen) { $seen = $true; $deadline = (Get-Date).AddMinutes(30) }
     # The setup program stops GazeFace once it starts installing.
-    if ($j.status -eq 'installing' -and -not (Get-Process -Name GazeFace -ErrorAction SilentlyContinue)) {
+    if ($j.status -eq 'installing' -and -not (Get-Ours)) {
       Show-Busy $busy
     }
   }
   if ((Get-Date) -gt $deadline) { if ($seen) { break } else { exit } }
 }
-if (-not (Get-Process -Name GazeFace -ErrorAction SilentlyContinue)) {
+if (-not (Get-Ours)) {
   if ($j -and $j.status -eq 'failed') { $text = $failed } else { $text = $starting }
   Show-Busy $text
   Wait-A-Bit 2000
@@ -302,7 +328,7 @@ if (-not (Get-Process -Name GazeFace -ErrorAction SilentlyContinue)) {
   # Keep the window up until GazeFace has a window of its own (max 60 s).
   for ($i = 0; $i -lt 60; $i++) {
     Wait-A-Bit 1000
-    $g = Get-Process -Name GazeFace -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }
+    $g = Get-Ours | Where-Object { $_.MainWindowHandle -ne 0 }
     if ($g) { break }
   }
 }
