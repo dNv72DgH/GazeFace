@@ -43,6 +43,21 @@ from src.i18n import t
 
 logger = logging.getLogger("GazeCalibrator")
 
+# A camera counts as connected while frames keep arriving.
+CAMERA_FRESH_S = 5.0
+
+
+def camera_live() -> bool:
+    """Has the camera delivered a frame within CAMERA_FRESH_S?"""
+    try:
+        import time
+        from src.camera_manager import CameraManager
+        ts = float(CameraManager().last_frame_ts() or 0.0)
+        return ts > 0 and time.time() - ts < CAMERA_FRESH_S
+    except Exception as e:
+        logger.debug("camera check failed: %s", e)
+        return False
+
 # 4x4 grid of fractional screen positions (corners clearly inside the
 # screen at 0.08 / 0.92). Denser than the 3x3 used by gaze-mouse so the
 # polynomial regression has a better-conditioned design matrix and the
@@ -154,6 +169,22 @@ class GazeCalibrator:
         # on screen.
         if GazeCalibrator.is_active():
             logger.warning("Calibration already running — ignoring start")
+            return
+        # Without frames there is nothing to calibrate with: the overlay
+        # would cover the screen for half a minute and save a fit made of
+        # no samples. Every way in (left menu, launcher, first launch)
+        # comes through here.
+        if not camera_live():
+            logger.warning("No camera frames — calibration not started")
+            try:
+                from src.gui.popups._util import ConfirmDialog
+                ConfirmDialog(self.master).open(
+                    t("The camera is not connected, so the calibration "
+                      "cannot run. Connect the camera first, restart the "
+                      "app, and then run it."),
+                    cancel=False)
+            except Exception as e:
+                logger.error("no-camera notice failed: %s", e)
             return
         # Use the real screen size for target placement (gaze-mouse
         # likewise targets physical pixels). pyautogui handles DPI on

@@ -357,8 +357,20 @@ class MainGui():
             from src.controllers import Keybinder
             if Keybinder()._has_gaze_calibration():
                 return
-            from src.gui.gaze_calibrator import GazeCalibrator
+            from src.gui.gaze_calibrator import GazeCalibrator, camera_live
             if GazeCalibrator.is_active():
+                return
+            # No frames (yet): the camera may still be opening at start-up,
+            # so look again shortly - for up to a minute. With no camera at
+            # all, nothing is asked; the next start with one asks then.
+            if not camera_live():
+                tries = self.__dict__.get("_cal_wait", 0)
+                if tries < 12:
+                    self._cal_wait = tries + 1
+                    self.tk_root.after(5000, self._maybe_first_calibration)
+                else:
+                    logger.info("No camera - first-run calibration not "
+                                "offered")
                 return
             asked.add(key)
         except Exception as e:

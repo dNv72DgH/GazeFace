@@ -363,11 +363,12 @@ begin
                    CustomMessage('FullDesc'), FullRadio);
   AddOption(Page, Top, 2, CustomMessage('StandardName'),
             CustomMessage('StandardDesc'), StandardRadio);
-  { Last install's choice; /EDITION=full|standard overrides it (silent). }
+  { Last install's choice, else the full edition; /EDITION=full|standard
+    overrides it (silent). }
   PrevEdition := Lowercase(GetPreviousData('Edition', ''));
   Initial := PrevEdition;
   if Initial = '' then
-    Initial := 'standard';
+    Initial := 'full';
   Initial := Lowercase(ExpandConstant('{param:EDITION|' + Initial + '}'));
   FullRadio.Checked := Initial = 'full';
   StandardRadio.Checked := not FullRadio.Checked;

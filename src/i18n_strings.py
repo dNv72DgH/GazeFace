@@ -599,6 +599,8 @@ JA = {
         "初回起動のため視線キャリブレーションを行います。次の画面で緑の点を順番に見つめて下さい。\n視線にずれを感じたら、こまめに左メニューより再キャリブレーションを行って下さい。",
     "Camera not found.\nIt is not connected, or another app is using it.":
         "カメラが見つかりません。\n接続されていないか、他アプリが使用中です。",
+    "The camera is not connected, so the calibration cannot run. Connect the camera first, restart the app, and then run it.":
+        "カメラが接続されていない為、キャリブレーションを実行できません。先にカメラを接続し、アプリを再起動してから実行して下さい。",
     "Jump to the nearest button or link": "直近のボタンやリンクにジャンプ",
     "If there is a button or link near where the jump lands, the pointer goes onto it. In some apps and sites this does not work, or picks the wrong thing.":
         "ジャンプ先の近くにボタンやリンクがあれば、そこにジャンプします。アプリやサイトによっては無効、または誤認識する事があります。",
