@@ -451,7 +451,11 @@ class MouseController(metaclass=Singleton):
             self.gaze_smooth = deque(maxlen=GAZE_SMOOTH_WINDOW)
 
             self.is_active = tk.BooleanVar()
-            initial_active = bool(ConfigManager().config["auto_play"])
+            # Face control is on at every start, restarts included: for
+            # someone whose face is the only input, an app that comes up
+            # with it off cannot be switched on. (The old per-profile
+            # "auto_play" key is no longer read.)
+            initial_active = True
             self.is_active.set(initial_active)
             self._active_flag = initial_active
             # Keep the worker-thread mirror in sync whenever the tk var

@@ -146,6 +146,10 @@ Type: filesandordirs; Name: "{app}"
 [Code]
 const
   SubExe = 'gazeface_sub.exe';
+  LocalCertName = 'CN=GazeFace Local Signing';
+  { Left in the install folder when the full edition setup fails; GazeFace reads it and
+    says so (src\updater.py), since a silent update shows no message. }
+  FullFailedMark = 'full_edition_failed.txt';
 
 { ---- running GazeFace ---- }
 
@@ -485,7 +489,10 @@ begin
               '', SW_SHOW, ewWaitUntilTerminated, RC) then
     Log('full_edition.ps1 did not start: ' + SysErrorMessage(RC))
   else if RC = 0 then
-    Exit
+  begin
+    DeleteFile(ExpandConstant('{app}\' + FullFailedMark));
+    Exit;
+  end
   else
     Log('full_edition.ps1 exit code ' + IntToStr(RC));
   Msg := FmtMessage(CustomMessage('FullFailed'), [IntToStr(RC)]);
@@ -498,7 +505,42 @@ begin
       Msg := Msg + #13#10 + Lines[I];
     end;
   end;
+  SetArrayLength(Lines, 1);
+  Lines[0] := Msg;
+  SaveStringsToUTF8File(ExpandConstant('{app}\' + FullFailedMark), Lines, False);
   SuppressibleMsgBox(Msg, mbError, MB_OK, IDOK);
+end;
+
+{ The per-PC signing certificate the full edition put in Root and
+  TrustedPublisher (its private key was deleted right after signing).
+  Removed on uninstall and when the standard edition is installed, so the
+  PC's trust settings do not outlive the full edition. }
+procedure RemoveLocalCertificate;
+var
+  RC: Integer;
+begin
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' +
+       'foreach ($s in ''Root'', ''TrustedPublisher'') { ' +
+       'Get-ChildItem (''Cert:\LocalMachine\'' + $s) | ' +
+       'Where-Object Subject -eq ''' + LocalCertName + ''' | Remove-Item }"',
+       '', SW_HIDE, ewWaitUntilTerminated, RC) then
+    Log('certificate removal did not start: ' + SysErrorMessage(RC))
+  else if RC <> 0 then
+    Log('certificate removal exit code ' + IntToStr(RC));
+end;
+
+{ The virtual mouse driver, when a full edition is replaced by the
+  standard one (which does not use it). }
+procedure RemoveDriver;
+var
+  RC: Integer;
+begin
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+       AddQuotes(ExpandConstant('{app}\driver\gfmouse_setup.ps1')) + ' -Remove',
+       '', SW_HIDE, ewWaitUntilTerminated, RC) then
+    Log('driver removal did not start: ' + SysErrorMessage(RC));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -511,7 +553,14 @@ begin
     SaveStringToFile(ExpandConstant('{app}\install_defaults.json'),
                      '{"language": "' + ActiveLanguage + '"}', False);
     if IsFullEdition then
-      RunFullEditionScript;
+      RunFullEditionScript
+    else
+    begin
+      DeleteFile(ExpandConstant('{app}\' + FullFailedMark));
+      RemoveLocalCertificate;
+      if PrevEdition = 'full' then
+        RemoveDriver;
+    end;
     { A silent update of the same edition (GazeFace's own updater) leaves
       the startup settings as the user last set them. It also runs as
       SYSTEM, whose HKCU is not the user's. }
@@ -582,6 +631,7 @@ begin
   begin
     SetInConfiguration(HKLM64, False);
     SetInConfiguration(HKCU, False);
+    RemoveLocalCertificate;
   end;
   if CurUninstallStep = usPostUninstall then
     if not UninstallSilent then

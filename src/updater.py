@@ -64,6 +64,10 @@ NOTES_MAX_AGE_S = 24 * 3600
 LAST_CHECK_KEY = "update_last_check"
 NOTIFY_KEY = "update_notify"
 SNOOZE_KEY = "update_snooze"
+# Written by the installer (GazeFace.iss) when the full edition setup
+# failed; removed when it succeeds or the standard edition is installed.
+FULL_FAILED_MARK = "full_edition_failed.txt"
+FULL_FAILED_SEEN_KEY = "full_edition_failed_seen"
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -198,10 +202,36 @@ def _loop(tk_root):
         delay = INTERVAL_S
 
 
+def _full_edition_notice(tk_root):
+    """The installer leaves FULL_FAILED_MARK in the install folder when
+    the full edition setup failed - silently so in an automatic update,
+    after which GazeFace just runs as the standard edition. Said once per
+    failure (the marker's time), in the banner."""
+    mark = paths.install_dir() / FULL_FAILED_MARK
+    try:
+        stamp = int(mark.stat().st_mtime)
+    except OSError:
+        return
+    try:
+        if int(_setting(FULL_FAILED_SEEN_KEY, 0) or 0) == stamp:
+            return
+        _save_setting(FULL_FAILED_SEEN_KEY, stamp)
+        detail = mark.read_text(encoding="utf-8-sig", errors="replace")
+    except Exception as e:
+        logger.debug("full edition marker: %s", e)
+        detail = ""
+    logger.error("full edition setup failed: %s", detail.strip()[:300])
+    UpdateBanner._get(tk_root).failed(
+        t("The full edition could not be set up, so GazeFace runs as the "
+          "standard edition. Run the installer again to retry."),
+        detail.strip().splitlines()[-1] if detail.strip() else "")
+
+
 def start(tk_root):
     """Call once from the main window (Tk thread)."""
     try:
         tk_root.after(1500, lambda: _after_update(tk_root))
+        tk_root.after(2500, lambda: _full_edition_notice(tk_root))
     except Exception as e:
         logger.error("post-update notice: %s", e)
     if not eligible():

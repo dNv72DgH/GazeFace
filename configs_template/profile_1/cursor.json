@@ -13,7 +13,7 @@
     "shape_smooth": 5,
     "tick_interval_ms": 16,
     "hold_trigger_ms": 500,
-    "auto_play": false,
+    "auto_play": true,
     "mouse_acceleration": false,
     "use_transformation_matrix": false,
     "chattering_prevention_enabled": false,

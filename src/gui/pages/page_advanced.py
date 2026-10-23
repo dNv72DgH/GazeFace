@@ -40,10 +40,6 @@ GAIN_SLIDER_MAX = 50    # 5.0x
 GAIN_SLIDER_DEFAULT = 30  # 3.0x — default sensitivity
 GAIN_DIVISOR = 10.0
 
-# Kept in step with src.ui_access.CONFIG_KEY, imported lazily everywhere
-# else because ui_access pulls in the restart machinery.
-UI_ACCESS_KEY = "ui_access"
-
 
 
 class PageAdvanced(SafeDisposableScrollableFrame):
@@ -598,73 +594,6 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             os.startfile(str(path))
         except Exception as e:
             logger.error("open %s failed: %s", path, e)
-
-    # ---------------------------------------------------------------- #
-    # UIAccess (not shown; the ui_access config key still applies)
-    # ---------------------------------------------------------------- #
-
-    def _build_uiaccess_section(self):
-        """Whether Windows lets our input reach higher-privilege windows."""
-        self._section(t("Elevated input permission"))
-        self.uiaccess_var = tkinter.BooleanVar(
-            value=bool(ConfigManager().config.get(
-                UI_ACCESS_KEY, False)))
-        self._grid(customtkinter.CTkCheckBox(
-            master=self,
-            text=t("Allow control of higher-privilege windows "
-                   "(restarts the app)"),
-            variable=self.uiaccess_var,
-            onvalue=True, offvalue=False,
-            command=self._on_uiaccess_toggle))
-        self.uiaccess_lbl = self._grid(customtkinter.CTkLabel(
-            master=self, text="", wraplength=560, justify=tkinter.LEFT),
-            pady=(0, 6))
-        self._refresh_uiaccess_label()
-
-    def _refresh_uiaccess_label(self):
-        """Say what is actually true, not what was ticked.
-
-        The box can be ticked on a machine where Windows will never grant
-        the flag (unsigned build, or installed outside Program Files), and
-        a setting that looks on while doing nothing is worse than no
-        setting at all.
-        """
-        try:
-            from src import ui_access
-            if not self.uiaccess_var.get():
-                self.uiaccess_lbl.configure(text="")
-                return
-            why = ui_access.blocker()
-            if why:
-                self.uiaccess_lbl.configure(
-                    text="%s\n%s" % (
-                        t("Not available on this installation: %s") % why,
-                        t("Input keeps working normally; only the "
-                          "elevated permission is unavailable.")))
-            elif ui_access.active():
-                self.uiaccess_lbl.configure(text=t("Active."))
-            else:
-                self.uiaccess_lbl.configure(
-                    text=t("Takes effect after the app restarts."))
-        except Exception as e:
-            logger.error("uiaccess label failed: %s", e)
-
-    def _on_uiaccess_toggle(self):
-        want = bool(self.uiaccess_var.get())
-        try:
-            ConfigManager().set_temp_config(UI_ACCESS_KEY, want)
-            ConfigManager().apply_config()
-        except Exception as e:
-            logger.error("ui_access write failed: %s", e)
-            return
-        self._refresh_uiaccess_label()
-        try:
-            from src import ui_access
-            if want and ui_access.blocker():
-                return          # nothing to restart into; label explains
-            ui_access.apply_switch("settings toggle")
-        except Exception as e:
-            logger.error("ui_access switch failed: %s", e)
 
     def _on_overlay_resume_toggle(self):
         try:

@@ -625,6 +625,8 @@ JA = {
     "Updating GazeFace... It starts again by itself when the update is done.":
         "GazeFace を更新しています… 更新が終わると自動で起動します。",
     "Starting GazeFace...": "GazeFace を起動しています…",
+    "The full edition could not be set up, so GazeFace runs as the standard edition. Run the installer again to retry.":
+        "完全版のセットアップに失敗したため、GazeFace は通常版として動いています。もう一度インストーラーを実行してください。",
     "The update failed. Starting GazeFace...": "更新に失敗しました。GazeFace を起動しています…",
     "Installing the update... GazeFace closes for a moment and starts again by itself.":
         "更新をインストールしています… GazeFace が一度終了し、自動で起動します。",

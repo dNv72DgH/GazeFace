@@ -119,9 +119,6 @@ class FrameCamPreview(SafeDisposableFrame):
             onvalue=1,
             offvalue=0,
         )
-        if ConfigManager().config["auto_play"]:
-            self.toggle_switch.select()
-
         self.toggle_switch.grid(row=4,
                                 column=0,
                                 padx=(112, 0),
