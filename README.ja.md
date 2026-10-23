@@ -18,8 +18,22 @@ GazeFace は、Web カメラだけで Windows を操作するためのアプリ�
 
 ## 動作環境
 
+最低:
+
 - Windows 10 / 11（64 ビット）
-- Web カメラ
+- CPU: 4 コア（Intel Core i5 第 8 世代 / AMD Ryzen 5 3000 シリーズ以上）
+- メモリ: 8 GB
+- ストレージ: 空き 1 GB
+- GPU: Direct3D 11 に対応した内蔵 GPU（Intel UHD 620 / AMD Radeon Vega 以上）
+- Web カメラ: 720p、30 fps
+
+推奨:
+
+- CPU: 6 コア以上
+- メモリ: 16 GB
+- 使う場所の明るさでよく映る Web カメラ
+
+顔の検出は CPU で行い、CPU の 1 スレッド分ほどを使い続けます。GPU は画面に重ねて表示する部分の描画にだけ使います。
 
 ## インストール
 
@@ -58,6 +72,8 @@ python -m venv .venv
 初回起動時は `configs_template` の内容が設定の初期値になります。
 
 ## クレジット
+
+私は四肢麻痺です。[Project Gameface](https://github.com/google/project-gameface) が無ければ、私が仕事を続けることはできませんでした。Project Gameface を開発し、オープンソースとして公開してくださった Google と関係者の皆さまに、心から感謝します。GazeFace は、同じ機会を他の人にも届けたいという思いから、その成果を元に生まれました。
 
 - [Project Gameface](https://github.com/google/project-gameface)（Google LLC） — GazeFace はこのプロジェクトを元に改変したものです
 - [MediaPipe Face Landmarker](https://developers.google.com/mediapipe/solutions/vision/face_landmarker) — 顔のランドマークと表情の検出

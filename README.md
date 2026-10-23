@@ -18,8 +18,22 @@ It is built for people who find a mouse and keyboard hard or impossible to use, 
 
 ## Requirements
 
+Minimum:
+
 - Windows 10 / 11 (64-bit)
-- A webcam
+- CPU: 4 cores (Intel Core i5 8th gen / AMD Ryzen 5 3000 series or better)
+- Memory: 8 GB
+- Storage: 1 GB free
+- GPU: integrated graphics with Direct3D 11 (Intel UHD 620 / AMD Radeon Vega or better)
+- Webcam: 720p, 30 fps
+
+Recommended:
+
+- CPU: 6 cores or more
+- Memory: 16 GB
+- A webcam that works well in your lighting
+
+Face detection runs on the CPU and keeps about one CPU thread busy. The GPU is used only to draw the on-screen overlays.
 
 ## Installation
 
@@ -58,6 +72,8 @@ Build the distributable with PyInstaller:
 On first launch the settings are seeded from `configs_template`.
 
 ## Credits
+
+I am quadriplegic. Without [Project Gameface](https://github.com/google/project-gameface), I could not have kept working. My heartfelt thanks to Google and everyone who built Project Gameface and released it as open source. GazeFace grew out of that work, in the hope of passing the same chance on to others.
 
 - [Project Gameface](https://github.com/google/project-gameface) (Google LLC) — GazeFace is a modified version of this project
 - [MediaPipe Face Landmarker](https://developers.google.com/mediapipe/solutions/vision/face_landmarker) — face landmark and expression detection
