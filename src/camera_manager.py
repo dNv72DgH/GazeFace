@@ -291,6 +291,14 @@ class ThreadCameras():
                 self.caps[cam_id] = None
 
         self.curr_id = new_id
+        # The detector keeps tracking state from the previous camera's
+        # frames; after a swap it was seen returning "no face" for a full
+        # minute (until the watchdog rebuilt it). Start it fresh.
+        try:
+            from src.detectors import FaceMesh
+            FaceMesh().request_rebuild()
+        except Exception as e:
+            logger.error("detector rebuild after camera swap: %s", e)
 
     def release_all_cameras(self):
         if self.caps is not None:

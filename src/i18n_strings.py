@@ -460,6 +460,12 @@ JA = {
     # ---- Left-pane status readout / restart ----
     "Status": "ステータス",
     "Enabled": "有効",
+    "Preparing": "準備中",
+    "Processing": "処理中",
+    "Starting face tracking...": "顔の検出を準備しています…",
+    "Face tracking is catching up...": "顔の検出が遅れています…",
+    "Searching": "検出中",
+    "Looking for your face...": "顔を探しています…",
     "Disabled": "無効",
     "Error": "エラー",
     "Restart": "再起動",

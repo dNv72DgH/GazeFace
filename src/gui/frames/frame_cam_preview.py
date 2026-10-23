@@ -224,6 +224,25 @@ class FrameCamPreview(SafeDisposableFrame):
                                          text_color=ERROR_TEXT)
             return
         on = bool(MouseController()._active_flag)
+        # Until face detection delivers (and whenever it falls behind) the
+        # meters and the pointer do not move. Say so, rather than looking
+        # like it is on and working.
+        try:
+            from src.detectors import FaceMesh
+            fm = FaceMesh().results_state()
+        except Exception:
+            fm = "ok"
+        if on and fm != "ok":
+            value, detail = {
+                "starting": (t("Preparing"), t("Starting face tracking...")),
+                "stalled": (t("Processing"),
+                            t("Face tracking is catching up...")),
+                "noface": (t("Searching"), t("Looking for your face...")),
+            }.get(fm, (t("Processing"), ""))
+            self.status_value.configure(text=value, text_color=MUTED)
+            self.status_detail.configure(text=detail, text_color=MUTED)
+            self.status_action.configure(text="")
+            return
         self.status_value.configure(
             text=t("Enabled") if on else t("Disabled"),
             text_color=ACCENT if on else MUTED)

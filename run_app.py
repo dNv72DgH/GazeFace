@@ -367,9 +367,22 @@ class MainApp(gui.MainGui, Pipeline):
     def anim_loop(self):
         if not self.is_active:
             return
+        # A stalled UI thread freezes the meters and face control alike
+        # (this loop IS the face pipeline). Log gaps between ticks so the
+        # next "frozen after start" report says how long and when.
+        now = time.monotonic()
+        last = getattr(self, "_anim_last", None)
+        self._anim_last = now
+        if last is not None and now - last > 0.7:
+            logging.warning("UI thread was busy for %.0f ms (since the "
+                            "previous pipeline tick)", (now - last) * 1000)
         try:
             # Run detectors and controllers.
+            t0 = time.monotonic()
             self.pipeline_tick()
+            took = time.monotonic() - t0
+            if took > 0.3:
+                logging.warning("pipeline tick took %.0f ms", took * 1000)
         except Exception as e:
             # Don't drop out of the loop on a transient error — that would
             # leave head tracking dead until the app is restarted.

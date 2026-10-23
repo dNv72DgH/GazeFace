@@ -27,6 +27,11 @@ from src.singleton_meta import Singleton
 
 logger = logging.getLogger("FaceMesh")
 
+# No face although frames are processed: rebuild the detector after this
+# many seconds, doubling up to the maximum while it stays that way.
+NO_FACE_FIRST_RECOVER_S = 8.0
+NO_FACE_MAX_RECOVER_S = 60.0
+
 # Blendshape smoothing window. Fixed rather than configurable: the
 # control was removed from the Cursor page, and this is the value every
 # profile shipped with. A profile that still carries a "shape_smooth"
@@ -118,6 +123,16 @@ def default_gaze_cal(screen_w, screen_h):
 class FaceMesh(metaclass=Singleton):
 
     def __init__(self):
+        # monotonic times: model start, and the latest callback of any
+        # kind (face or no face). 0 = none yet. Read by the home screen's
+        # status ("preparing face tracking" until results flow).
+        self.started_mono = 0.0
+        self.last_result_mono = 0.0
+        self.last_face_mono = 0.0
+        # No-face recovery (see _maybe_recover): next allowed rebuild,
+        # and the current back-off.
+        self._next_recover_mono = 0.0
+        self._recover_gap_s = NO_FACE_FIRST_RECOVER_S
         logger.info("Intialize FaceMesh singleton")
         self.mp_landmarks = None
         self.track_loc = None
@@ -155,6 +170,7 @@ class FaceMesh(metaclass=Singleton):
     def start(self):
         if not self.is_started:
             logger.info("Start FaceMesh singleton")
+            self.started_mono = time.monotonic()
             self._build_model()
             self.calc_smooth_kernel()
             self.is_started = True
@@ -295,6 +311,21 @@ class FaceMesh(metaclass=Singleton):
             return 0.0, 0.0
 
     def mp_callback(self, mp_result, output_image, timestamp_ms: int):
+        now = time.monotonic()
+        if not self.last_result_mono and self.started_mono:
+            logger.info("Face tracking ready: first result %.1f s after "
+                        "start", now - self.started_mono)
+        self.last_result_mono = now
+        try:
+            if len(mp_result.face_landmarks) >= 1:
+                if not self.last_face_mono or (
+                        now - self.last_face_mono > NO_FACE_FIRST_RECOVER_S):
+                    logger.info("Face found")
+                self.last_face_mono = now
+                self._recover_gap_s = NO_FACE_FIRST_RECOVER_S
+                self._next_recover_mono = 0.0
+        except Exception:
+            pass
         # The whole body is guarded: this is invoked from MediaPipe's
         # C++ callback context, where an escaping Python exception can
         # corrupt/stop the detector. calc_track_loc in particular can
@@ -345,6 +376,8 @@ class FaceMesh(metaclass=Singleton):
             self._rebuild_requested = False
             self._rebuild_model_inline()
 
+        self._maybe_recover()
+
         # If the model failed to (re)build, skip this frame rather than
         # raising 'NoneType has no attribute detect_async'.
         if self.model is None:
@@ -364,6 +397,41 @@ class FaceMesh(metaclass=Singleton):
         frame_mp = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_np)
         self.model.detect_async(frame_mp, t_ms)
         self.latest_time_ms = t_ms
+
+    def _maybe_recover(self):
+        """Rebuild the detector when it keeps answering "no face".
+
+        Seen after start-up: frames were processed and results came back,
+        but without a face, for a whole minute until the watchdog rebuilt
+        the model - with the user sitting in front of the camera, and
+        nothing on screen moving. Someone who is really away costs a
+        rebuild now and then (a few hundred ms), so the gaps grow:
+        8 s, 16 s, 32 s, then once a minute. Pipeline thread only."""
+        if not self.last_result_mono:
+            return                  # still starting: nothing to judge yet
+        now = time.monotonic()
+        since = now - max(self.last_face_mono, self.started_mono)
+        if since < NO_FACE_FIRST_RECOVER_S or now < self._next_recover_mono:
+            return
+        logger.warning("No face for %.0f s although frames are processed "
+                       "- rebuilding the detector", since)
+        self._next_recover_mono = now + self._recover_gap_s
+        self._recover_gap_s = min(self._recover_gap_s * 2,
+                                  NO_FACE_MAX_RECOVER_S)
+        self._rebuild_model_inline()
+
+    def results_state(self) -> str:
+        """'starting' until the first result, 'stalled' when results
+        stopped for over a second and a half, 'noface' when results come
+        but without a face for over two seconds, else 'ok'."""
+        if not self.last_result_mono:
+            return "starting"
+        now = time.monotonic()
+        if now - self.last_result_mono > 1.5:
+            return "stalled"
+        if now - max(self.last_face_mono, self.started_mono) > 2.0:
+            return "noface"
+        return "ok"
 
     def get_landmarks(self):
         return self.mp_landmarks

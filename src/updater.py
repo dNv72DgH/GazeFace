@@ -57,7 +57,7 @@ TASK = r"\GazeFace\Update"
 
 FIRST_DELAY_S = 60
 INTERVAL_S = 24 * 3600
-STARTUP_MIN_GAP_S = 3600
+STARTUP_MIN_GAP_S = 600
 SNOOZE_S = 24 * 3600
 NOTES_MAX_AGE_S = 24 * 3600
 
@@ -187,9 +187,11 @@ def _loop(tk_root):
     except (TypeError, ValueError):
         last = 0
     gap = time.time() - last
-    # Every start the user makes checks. Self-restarts (auto recovery,
-    # restart.py passes --wait-pid) can come often, so those skip the
-    # start check when one ran within the hour (not when testing).
+    # Every start the user makes checks. A start that replaces a running
+    # copy (restart.py passes --wait-pid: auto recovery, but also the
+    # menu's Restart and the switch to the UIAccess build) skips it only
+    # when one ran within the last 10 minutes - recovery restarts can come
+    # in bursts, the others should not miss a release.
     self_restart = "--wait-pid" in sys.argv
     delay = (FIRST_DELAY_S
              if (not self_restart or gap >= STARTUP_MIN_GAP_S
@@ -280,7 +282,23 @@ def _spawn_relauncher(stamp):
 $r = %s; $exe = %s; $dir = %s; $t0 = [int64]%d
 $title = %s; $busy = %s; $starting = %s; $failed = %s
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+# Without visual styles a Marquee progress bar is drawn but never moves.
+[System.Windows.Forms.Application]::EnableVisualStyles()
 $form = $null; $label = $null
+# GazeFace from THIS install only (either exe): a copy run from another
+# folder is not stopped by the setup program and must not count. The path
+# comes from QueryFullProcessImageName with limited-query rights: .Path is
+# empty for the UIAccess build when asked from a normal process.
+Add-Type -Namespace GfUpd -Name Img -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern System.IntPtr OpenProcess(int access, bool inherit, int pid);
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern bool QueryFullProcessImageNameW(System.IntPtr h, int flags, System.Text.StringBuilder name, ref int size);
+[DllImport("kernel32.dll")]
+public static extern bool CloseHandle(System.IntPtr h);
+[DllImport("user32.dll")]
+public static extern bool ShowWindow(System.IntPtr h, int cmd);
+'@
 function Show-Busy([string]$text) {
   if (-not $script:form) {
     $f = New-Object System.Windows.Forms.Form
@@ -295,23 +313,14 @@ function Show-Busy([string]$text) {
     $p.Style = 'Marquee'; $p.MarqueeAnimationSpeed = 30; $p.SetBounds(20, 78, 420, 20)
     $f.Controls.Add($p)
     $f.Show()
+    # Started hidden, so Windows applies SW_HIDE to this process's first
+    # ShowWindow - the Show() above. A second, explicit one shows it.
+    [void][GfUpd.Img]::ShowWindow($f.Handle, 5)
     $script:form = $f; $script:label = $l
   }
   $script:label.Text = $text
   [System.Windows.Forms.Application]::DoEvents()
 }
-# GazeFace from THIS install only (either exe): a copy run from another
-# folder is not stopped by the setup program and must not count. The path
-# comes from QueryFullProcessImageName with limited-query rights: .Path is
-# empty for the UIAccess build when asked from a normal process.
-Add-Type -Namespace GfUpd -Name Img -MemberDefinition @'
-[DllImport("kernel32.dll", SetLastError = true)]
-public static extern System.IntPtr OpenProcess(int access, bool inherit, int pid);
-[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-public static extern bool QueryFullProcessImageNameW(System.IntPtr h, int flags, System.Text.StringBuilder name, ref int size);
-[DllImport("kernel32.dll")]
-public static extern bool CloseHandle(System.IntPtr h);
-'@
 function Get-ImagePath([int]$procId) {
   $h = [GfUpd.Img]::OpenProcess(0x1000, $false, $procId)
   if ($h -eq [IntPtr]::Zero) { return '' }
