@@ -147,6 +147,28 @@ HELP_TEXTS = {
         "way. While it is moving, the Gaze move gesture again stops the "
         "pointer, and any other gesture immediately runs the action "
         "assigned to it."),
+    # ---- launcher item editor ----
+    "Key / mouse macro": (
+        "Key / mouse macro",
+        "With a macro, even a complicated operation takes nothing but "
+        "your gaze. Choosing the launcher button runs the key and mouse "
+        "operations below in order. One line is one step, run from the top; the buttons "
+        "on the right add lines.\n"
+        "key ctrl+c: press keys (+ for together, e.g. ctrl+shift+s, "
+        "win+up, alt+f4, enter, esc, f5)\n"
+        "text Hello: type text (pasted through the clipboard, so its "
+        "content is replaced)\n"
+        "wait 500: wait this many milliseconds\n"
+        "mouse left / right / middle / double: click where the pointer is\n"
+        "wheel up 3: scroll (up / down / left / right, and how many "
+        "notches)\n"
+        "drag left: keep the button pressed; move the pointer, and the "
+        "next click lets go\n"
+        "hold left 800: press and hold in place for this many "
+        "milliseconds\n"
+        "swipe ↑ medium: press, move that way, let go, and return to the "
+        "start (small / medium / large = 10 / 25 / 45% of the screen "
+        "height, or a number of pixels)"),
     # ---- per-tool gesture maps ----
     "Launcher gestures": (
         "Launcher gestures",

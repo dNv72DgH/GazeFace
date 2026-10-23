@@ -1101,6 +1101,8 @@ class ItemRegisterPopup:
                                (t("Wait"), self._ins_wait)):
                 customtkinter.CTkButton(bar, text=label, width=130,
                                         command=cmd).pack(pady=3, anchor="n")
+            from src.gui.help_icon import HelpIcon
+            HelpIcon(bar, "Key / mouse macro").pack(pady=(8, 0), anchor="n")
         elif tp == "action":
             customtkinter.CTkLabel(
                 self.field, text=t("Mouse action")).pack(anchor="w")

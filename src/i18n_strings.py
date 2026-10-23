@@ -625,6 +625,9 @@ JA = {
     "Updating GazeFace... It starts again by itself when the update is done.":
         "GazeFace を更新しています… 更新が終わると自動で起動します。",
     "Starting GazeFace...": "GazeFace を起動しています…",
+    'Key / mouse macro': 'キー・マウス マクロ',
+    'With a macro, even a complicated operation takes nothing but your gaze. Choosing the launcher button runs the key and mouse operations below in order. One line is one step, run from the top; the buttons on the right add lines.\nkey ctrl+c: press keys (+ for together, e.g. ctrl+shift+s, win+up, alt+f4, enter, esc, f5)\ntext Hello: type text (pasted through the clipboard, so its content is replaced)\nwait 500: wait this many milliseconds\nmouse left / right / middle / double: click where the pointer is\nwheel up 3: scroll (up / down / left / right, and how many notches)\ndrag left: keep the button pressed; move the pointer, and the next click lets go\nhold left 800: press and hold in place for this many milliseconds\nswipe ↑ medium: press, move that way, let go, and return to the start (small / medium / large = 10 / 25 / 45% of the screen height, or a number of pixels)':
+        'キーマクロを使えば、複雑な操作も視線だけで行えます。ランチャーのボタンを選ぶと、ここに書いたキー操作やマウス操作を順番に実行します。1 行が 1 つの操作で、上から順に実行します。右のボタンで行を追加できます。\nkey ctrl+c: キーを押す（+ で同時押し。例: ctrl+shift+s、win+up、alt+f4、enter、esc、f5）\ntext こんにちは: 文字を入力（クリップボード経由で貼り付けるため、クリップボードの内容は置き換わります）\nwait 500: 指定したミリ秒だけ待つ\nmouse left / right / middle / double: 今のポインターの位置でクリック\nwheel up 3: ホイールを回す（up / down / left / right と回数）\ndrag left: ボタンを押したままにする。ポインターを動かし、次のクリックで離す\nhold left 800: その場で指定したミリ秒だけ長押し\nswipe ↑ medium: 押したまま指定した方向へ動かして離し、元の位置に戻る（small / medium / large = 画面の高さの 10 / 25 / 45%、または px の数値）',
     "The full edition could not be set up, so GazeFace runs as the standard edition. Run the installer again to retry.":
         "完全版のセットアップに失敗したため、GazeFace は通常版として動いています。もう一度インストーラーを実行してください。",
     "The update failed. Starting GazeFace...": "更新に失敗しました。GazeFace を起動しています…",
