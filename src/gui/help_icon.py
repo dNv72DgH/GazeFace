@@ -66,7 +66,9 @@ HELP_TEXTS = {
         "Even a weak gesture responds strongly from the start."),
     "Hold time (ms)": (
         "Hold time (ms)",
-        "Holding the gesture for this long switches it on."),
+        "Holding the gesture for this long switches it on. Depending on "
+        "the lighting, short, large noise-like inputs can repeat. Setting "
+        "the hold time to about 200 ms suppresses them."),
     "Slider upper limit": (
         "Slider upper limit",
         "Set this when the slider barely moves and is hard to read."),

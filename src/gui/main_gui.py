@@ -64,6 +64,9 @@ class MainGui():
         # Daily update check, and the release notes after an update.
         from src import updater
         updater.start(self.tk_root)
+        # Start-up: say so when the camera works but no face is found.
+        self._noface_notice = None
+        self.tk_root.after(1000, self._noface_watch)
         # Restore the last on-screen position (saved on exit). Size is
         # fixed, so only the +x+y offset is remembered.
         self._restore_window_pos()
@@ -317,6 +320,62 @@ class MainGui():
         if function_name == "toggle_switch":
             self.set_mediapipe_mouse_enable(new_state=args["switch_status"])
 
+    # Seconds without a face (camera delivering) before the notice shows.
+    NOFACE_NOTICE_S = 10
+
+    def _noface_watch(self):
+        """At start-up only: when the camera delivers but no face has been
+        found for NOFACE_NOTICE_S, say so in the middle of the window, and
+        take it away by itself once a face is found. Some cameras only
+        find a still face after a big head movement."""
+        try:
+            from src.detectors import FaceMesh
+            from src.gui.gaze_calibrator import camera_live
+            fm = FaceMesh()
+            if fm.last_face_mono:            # found: done for this run
+                self._hide_noface_notice()
+                return
+            waited = time.monotonic() - (fm.started_mono or time.monotonic())
+            if camera_live() and waited >= self.NOFACE_NOTICE_S:
+                self._show_noface_notice()
+            else:
+                self._hide_noface_notice()
+        except Exception as e:
+            logger.error("no-face notice: %s", e)
+            return
+        self.tk_root.after(500, self._noface_watch)
+
+    def _show_noface_notice(self):
+        if self._noface_notice is not None:
+            try:
+                self._noface_notice.lift()
+            except Exception:
+                pass
+            return
+        f = customtkinter.CTkFrame(self.tk_root, fg_color="white",
+                                   border_color="#E7E2DB", border_width=1,
+                                   corner_radius=12)
+        customtkinter.CTkLabel(
+            f, wraplength=440, justify="left",
+            text=t("No face can be detected. Try moving your head a lot or "
+                   "changing your expression. A face may not be detected in "
+                   "a very dark or very bright room.")).pack(
+                padx=24, pady=20)
+        f.place(relx=0.5, rely=0.5, anchor="center")
+        f.lift()
+        self._noface_notice = f
+        logger.info("No-face notice shown")
+
+    def _hide_noface_notice(self):
+        if self._noface_notice is None:
+            return
+        try:
+            self._noface_notice.destroy()
+        except Exception:
+            pass
+        self._noface_notice = None
+        logger.info("No-face notice removed")
+
     def set_mediapipe_mouse_enable(self, new_state: bool):
         if new_state:
             MouseController().set_active(True)
@@ -381,7 +440,8 @@ class MainGui():
         def start():
             try:
                 from src.gui.gaze_calibrator import GazeCalibrator
-                GazeCalibrator(self.tk_root).start()
+                # The notice below already asked.
+                GazeCalibrator(self.tk_root).start(confirmed=True)
             except Exception as e:
                 logger.error("first-run calibration failed: %s", e)
         from src.gui.popups._util import ConfirmDialog

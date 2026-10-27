@@ -35,6 +35,10 @@ from src.singleton_meta import Singleton
 
 logger = logging.getLogger("Keybinder")
 
+# Hold time (ms) for a gesture with none set in gesture_hold_ms (0 =
+# fire at once). Same default as the gesture options' hold slider.
+HOLD_DEFAULT_MS = 0
+
 # disable lag
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -550,7 +554,7 @@ class Keybinder(metaclass=Singleton):
             if above and not self._launcher_states.get(shape, False):
                 # Hold-time guard: require sustained-above-threshold for
                 # gesture_hold_ms[shape] before firing (0 = immediate).
-                hold_ms = float(hold_cfg.get(shape, 0))
+                hold_ms = float(hold_cfg.get(shape, HOLD_DEFAULT_MS))
                 if hold_ms > 0:
                     started = self._lh_start.get(shape)
                     if started is None:
@@ -1204,7 +1208,8 @@ class Keybinder(metaclass=Singleton):
             # has elapsed. Below threshold resets the hold timer.
             hold_cfg = ConfigManager().config.get(
                 "gesture_hold_ms", {}) or {}
-            hold_required_ms = float(hold_cfg.get(shape_name, 0))
+            hold_required_ms = float(hold_cfg.get(shape_name,
+                                                  HOLD_DEFAULT_MS))
             if hold_required_ms > 0:
                 if val > thres:
                     started = self._hold_start.get(shape_name)

@@ -31,6 +31,15 @@ logger = logging.getLogger("FaceMesh")
 # many seconds, doubling up to the maximum while it stays that way.
 NO_FACE_FIRST_RECOVER_S = 8.0
 NO_FACE_MAX_RECOVER_S = 60.0
+# Confidence the detector needs to FIND a face (MediaPipe's default 0.5).
+# Once found, the face is tracked, which copes with poses the first find
+# misses: seen after a Windows update, a still user resting in a usual
+# pose was not found for two minutes, until a big head movement. Each
+# no-face rebuild steps down this list; finding a face goes back to the
+# first value at the next rebuild.
+# Lowering it (0.35, 0.25) was tried and did not find the face either,
+# so it stays at the default; the steps are kept for the log line only.
+DETECT_CONFIDENCE_STEPS = (0.5,)
 
 # Blendshape smoothing window. Fixed rather than configurable: the
 # control was removed from the Cursor page, and this is the value every
@@ -129,6 +138,12 @@ class FaceMesh(metaclass=Singleton):
         self.started_mono = 0.0
         self.last_result_mono = 0.0
         self.last_face_mono = 0.0
+        self._detect_step = 0
+        self._detect_conf = DETECT_CONFIDENCE_STEPS[0]
+        # Frame-change diagnostics: a small grey copy of the previous
+        # frame and how much the latest one differs from it.
+        self._prev_small = None
+        self._frame_change = None
         # No-face recovery (see _maybe_recover): next allowed rebuild,
         # and the current back-off.
         self._next_recover_mono = 0.0
@@ -154,6 +169,8 @@ class FaceMesh(metaclass=Singleton):
         self._rebuild_requested = False
 
     def _build_model(self):
+        self._detect_conf = DETECT_CONFIDENCE_STEPS[
+            getattr(self, "_detect_step", 0)]
         # In Windows, needs to open buffer directly
         with open(MP_TASK_FILE, mode="rb") as f:
             f_buffer = f.read()
@@ -164,6 +181,8 @@ class FaceMesh(metaclass=Singleton):
             output_facial_transformation_matrixes=True,
             running_mode=mp.tasks.vision.RunningMode.LIVE_STREAM,
             num_faces=1,
+            min_face_detection_confidence=self._detect_conf,
+            min_face_presence_confidence=min(0.5, self._detect_conf),
             result_callback=self.mp_callback)
         self.model = vision.FaceLandmarker.create_from_options(options)
 
@@ -320,10 +339,11 @@ class FaceMesh(metaclass=Singleton):
             if len(mp_result.face_landmarks) >= 1:
                 if not self.last_face_mono or (
                         now - self.last_face_mono > NO_FACE_FIRST_RECOVER_S):
-                    logger.info("Face found")
+                    logger.info("Face found (%s)", self._frame_stats())
                 self.last_face_mono = now
                 self._recover_gap_s = NO_FACE_FIRST_RECOVER_S
                 self._next_recover_mono = 0.0
+                self._detect_step = 0
         except Exception:
             pass
         # The whole body is guarded: this is invoked from MediaPipe's
@@ -394,6 +414,16 @@ class FaceMesh(metaclass=Singleton):
         if t_ms <= self.latest_time_ms:
             return
 
+        self._last_frame = frame_np         # for the no-face diagnostics
+        try:
+            small = np.asarray(frame_np[::16, ::16], np.float32).mean(axis=2)
+            if self._prev_small is not None and \
+                    self._prev_small.shape == small.shape:
+                self._frame_change = float(
+                    np.abs(small - self._prev_small).mean())
+            self._prev_small = small
+        except Exception:
+            pass
         frame_mp = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_np)
         self.model.detect_async(frame_mp, t_ms)
         self.latest_time_ms = t_ms
@@ -414,11 +444,32 @@ class FaceMesh(metaclass=Singleton):
         if since < NO_FACE_FIRST_RECOVER_S or now < self._next_recover_mono:
             return
         logger.warning("No face for %.0f s although frames are processed "
-                       "- rebuilding the detector", since)
+                       "- rebuilding the detector (%s)", since,
+                       self._frame_stats())
         self._next_recover_mono = now + self._recover_gap_s
         self._recover_gap_s = min(self._recover_gap_s * 2,
                                   NO_FACE_MAX_RECOVER_S)
+        self._detect_step = min(self._detect_step + 1,
+                                len(DETECT_CONFIDENCE_STEPS) - 1)
         self._rebuild_model_inline()
+
+    def _frame_stats(self) -> str:
+        """Size and brightness of the latest frame, for the log: tells a
+        dark or blank camera (exposure still settling, lens covered, the
+        wrong device) from a detector problem. No image is kept."""
+        f = getattr(self, "_last_frame", None)
+        if f is None:
+            return "no frame"
+        try:
+            g = np.asarray(f, dtype=np.float32).mean(axis=2)
+            change = ("%.1f" % self._frame_change
+                      if self._frame_change is not None else "?")
+            return ("frame %dx%d, brightness mean %.0f, contrast %.0f, "
+                    "change from previous frame %s, detect confidence %.2f"
+                    % (g.shape[1], g.shape[0], float(g.mean()),
+                       float(g.std()), change, self._detect_conf))
+        except Exception as e:
+            return "frame stats failed: %s" % e
 
     def results_state(self) -> str:
         """'starting' until the first result, 'stalled' when results

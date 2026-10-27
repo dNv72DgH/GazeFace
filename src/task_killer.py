@@ -35,6 +35,39 @@ def _is_named(proc, names):
         return False
 
 
+def hard_exit(code: int = 0, flush_logs: bool = True):
+    """End this process with TerminateProcess, not os._exit.
+
+    os._exit ends in ExitProcess, which kills the other threads and then
+    runs every DLL's detach routine in this one. A killed thread can die
+    holding a lock a detach routine needs, and then the process never
+    finishes exiting. Measured 2026-10-27: an instance hammered by the
+    6 s force-kill at 08:58 was still there at 18:40 - one thread left,
+    exe file locked, and neither Stop-Process -Force nor taskkill could
+    end it (a process already exiting refuses TerminateProcess from
+    outside), so installing over it failed. TerminateProcess on ourselves
+    is done by the kernel and runs no user-mode code here.
+    """
+    if flush_logs:
+        try:
+            for h in logging.getLogger().handlers:
+                h.flush()
+        except Exception:
+            pass
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.GetCurrentProcess.restype = wintypes.HANDLE
+        k.GetCurrentProcess.argtypes = []
+        k.TerminateProcess.restype = wintypes.BOOL
+        k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k.TerminateProcess(k.GetCurrentProcess(), code)
+    except Exception:
+        pass
+    os._exit(code)      # only if the above failed
+
+
 class TaskKiller(metaclass=Singleton):
     """Singleton class for saftly killing the process and free the memory
     """
@@ -266,7 +299,8 @@ class TaskKiller(metaclass=Singleton):
             TaskKiller._reap_children(
                 "force-kill",
                 skip_pids=TaskKiller._replacement_pids())
-            os._exit(0)
+            # No log flush: the handler lock may be what is stuck.
+            hard_exit(0, flush_logs=False)
 
         threading.Thread(target=_force_kill, name="ForceKill",
                          daemon=True).start()
@@ -342,9 +376,7 @@ class TaskKiller(metaclass=Singleton):
                 logger.error("mutex release failed: %s", e)
             TaskKiller._spawn_once()
 
-        # Use os._exit so we don't sit in atexit handlers that may try to
-        # touch already-released resources (and so we don't TerminateProcess
-        # ourselves before cleanup above has actually flushed). os._exit
-        # also hard-kills every remaining thread immediately, so nothing
-        # (daemon or not) can linger after this line.
-        os._exit(0)
+        # Skip atexit handlers that may touch already-released resources,
+        # and ExitProcess's DLL detach (see hard_exit). The log is flushed
+        # first; every remaining thread dies with the process.
+        hard_exit(0)

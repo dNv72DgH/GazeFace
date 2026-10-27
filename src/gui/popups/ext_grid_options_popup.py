@@ -146,7 +146,7 @@ class ExtGridOptionsPopup:
         customtkinter.CTkLabel(
             brow, text=t("Ignore blinks (ms)")).pack(side="left", padx=(0, 8))
         self.blink_var = tk.IntVar(
-            value=int(cfg.get("ignore_blink_ms", 200) or 0))
+            value=int(cfg.get("ignore_blink_ms", 0) or 0))
         customtkinter.CTkSlider(
             brow, from_=0, to=500, number_of_steps=25, width=200,
             variable=self.blink_var,

@@ -472,6 +472,14 @@ if __name__ == "__main__":
 
     logging.info("Starting main app.")
 
+    # Garbage collection only on this thread (see src/gc_guard.py): a
+    # worker thread collecting a tkinter object deadlocked the UI.
+    try:
+        from src import gc_guard
+        gc_guard.start(tk_root)
+    except Exception as e:
+        logging.error("gc guard start failed: %s", e, exc_info=e)
+
     # External crash sentinel: mark ourselves running-not-clean, then spawn
     # a separate process that relaunches us if we vanish without flipping
     # that mark (i.e. a native crash that never reaches TaskKiller.exit).
@@ -564,5 +572,5 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except BaseException:
-        import os
-        os._exit(0)
+        from src.task_killer import hard_exit
+        hard_exit(0)

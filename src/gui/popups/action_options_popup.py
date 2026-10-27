@@ -217,7 +217,7 @@ class ActionOptionsPopup:
             master=self._col, fg_color="transparent")
         selrow.pack(padx=20, pady=(2, 0), anchor="w", fill="x")
         self.gm_blink_var = tk.IntVar(value=int(
-            ConfigManager().config.get("gaze_move_ignore_blink_ms", 200)
+            ConfigManager().config.get("gaze_move_ignore_blink_ms", 0)
             or 0))
         customtkinter.CTkSlider(
             selrow, from_=0, to=500, number_of_steps=25, width=220,

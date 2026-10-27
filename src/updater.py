@@ -269,8 +269,9 @@ def _spawn_relauncher(stamp):
     once, so it is nobody's child when the installer stops GazeFace's
     process tree. Gives up after 2 minutes if the task never starts, and
     starts nothing while a GazeFace of this install is running (the
-    update failed before the setup program stopped it). Copies run from
-    other folders are ignored: the setup program does not stop them.
+    update failed before the setup program stopped it), so a failure
+    after GazeFace was stopped brings it back too. Copies run from other
+    folders are ignored: the setup program does not stop them.
 
     While GazeFace is closed for the install there is nothing of it on
     screen, which looked like it had simply vanished. So from the moment
@@ -330,8 +331,12 @@ function Get-ImagePath([int]$procId) {
     return ''
   } finally { [void][GfUpd.Img]::CloseHandle($h) }
 }
+# Only a GazeFace that is really running: the remains of one that never
+# finished exiting (one thread left, no window) must not stop this helper
+# from starting GazeFace again after a failed update.
 function Get-Ours {
   Get-Process -Name GazeFace, GazeFace_UI -ErrorAction SilentlyContinue |
+    Where-Object { $_.Threads.Count -gt 1 -or $_.MainWindowHandle -ne 0 } |
     Where-Object { (Get-ImagePath $_.Id).StartsWith($dir + '\', [StringComparison]::OrdinalIgnoreCase) }
 }
 function Wait-A-Bit([int]$ms) {

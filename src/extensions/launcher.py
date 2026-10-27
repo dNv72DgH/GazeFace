@@ -259,7 +259,7 @@ class Launcher:
                    confirm_ms=int(_launcher_cfg().get("confirm_ms", 0) or 0),
                    on_confirm=lambda: self.on_action("confirm"),
                    ignore_blink_ms=int(
-                       _launcher_cfg().get("ignore_blink_ms", 200) or 0))
+                       _launcher_cfg().get("ignore_blink_ms", 0) or 0))
             logger.info("Launcher: deferred grid.open dispatched")
         except Exception as e:
             logger.error("Launcher deferred grid.open FAILED: %s", e,

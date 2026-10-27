@@ -43,10 +43,10 @@ GAIN_DIVISOR = 10.0
 
 # Hold-time (ms) bounds for the universal hold-time control.
 HOLD_MIN_MS = 0             # 0 disables the hold guard
-HOLD_MAX_MS = 5000
-# Default is 0 (fire immediately). Close left/right eye historically
-# defaulted to 100ms — that's now applied via the seeded values in
-# configs/*/cursor.json gesture_hold_ms dict rather than as a UI rule.
+HOLD_MAX_MS = 2000
+# Default is 0 (fire immediately). Close left/right eye default to 100ms
+# through the seeded values in configs_template/*/cursor.json. Keep in
+# step with keybinder.HOLD_DEFAULT_MS.
 HOLD_DEFAULT_MS = 0
 
 # Motion-freeze sensitivity bounds, in the 0..5000 display scale

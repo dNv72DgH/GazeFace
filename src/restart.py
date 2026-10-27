@@ -289,7 +289,8 @@ def request_restart(reason: str, config_suspect: bool = False) -> bool:
         logger.error("restart teardown failed: %s", e, exc_info=e)
         # Teardown is best-effort; the replacement still needs launching.
         spawn_replacement()
-        os._exit(0)
+        from src.task_killer import hard_exit
+        hard_exit(0)
     return True
 
 

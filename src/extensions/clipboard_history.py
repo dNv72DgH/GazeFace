@@ -233,7 +233,7 @@ class ClipboardHistory:
                     confirm_ms=int(_cb_cfg().get("confirm_ms", 0) or 0),
                     on_confirm=lambda: self.on_action("confirm"),
                     ignore_blink_ms=int(
-                        _cb_cfg().get("ignore_blink_ms", 200) or 0)))
+                        _cb_cfg().get("ignore_blink_ms", 0) or 0)))
         except Exception as e:
             logger.error("clipboard open failed: %s", e)
             self.close()

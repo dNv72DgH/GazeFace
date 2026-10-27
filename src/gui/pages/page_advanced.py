@@ -90,6 +90,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         # run_app reads them with those same defaults. The builder is kept
         # so the section can be brought back by restoring this call.
         # self._build_overlay_section()
+        self._build_calibration_section()
         self._build_recovery_section()
         self._build_language_section()
         self._build_update_section()
@@ -302,6 +303,22 @@ class PageAdvanced(SafeDisposableScrollableFrame):
     # is always written to %LOCALAPPDATA%\GazeFace either way, and the
     # verbose flag is read straight from config at start-up
     # (verbose_logging, app-wide), so nothing here was load-bearing.
+
+    # ---------------------------------------------------------------- #
+    # Calibration (app-wide)
+    # ---------------------------------------------------------------- #
+
+    def _build_calibration_section(self):
+        from src.gui import gaze_calibrator
+        self._section(t("Calibration"))
+        self.cal_confirm_var = tkinter.BooleanVar(
+            value=gaze_calibrator.confirm_enabled())
+        self._grid(customtkinter.CTkCheckBox(
+            master=self, text=t("Confirm before running"),
+            variable=self.cal_confirm_var, onvalue=True, offvalue=False,
+            command=lambda: ConfigManager().write_app_setting(
+                gaze_calibrator.CONFIRM_KEY,
+                bool(self.cal_confirm_var.get()))))
 
     # ---------------------------------------------------------------- #
     # Auto recovery

@@ -43,6 +43,17 @@ from src.i18n import t
 
 logger = logging.getLogger("GazeCalibrator")
 
+# Advanced settings > Calibration > "Confirm before running" (app-wide).
+CONFIRM_KEY = "calibration_confirm"
+
+
+def confirm_enabled() -> bool:
+    try:
+        return bool(ConfigManager()._read_app_setting(CONFIRM_KEY, False))
+    except Exception:
+        return False
+
+
 # A camera counts as connected while frames keep arriving.
 CAMERA_FRESH_S = 5.0
 
@@ -159,7 +170,51 @@ class GazeCalibrator:
     # Lifecycle
     # ---------------------------------------------------------------- #
 
-    def start(self):
+    def _ask_first(self):
+        """A small topmost window, not a panel: the calibration can be
+        started from the gaze launcher while the main window is hidden,
+        where a panel inside it would never be seen. Not a native
+        messagebox either - that would block the Tk loop and face
+        control with it."""
+        import customtkinter
+        W, H = 380, 150
+        dlg = customtkinter.CTkToplevel(self.master)
+        dlg.title(t("Gaze calibration"))
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+        x = (dlg.winfo_screenwidth() - W) // 2
+        y = (dlg.winfo_screenheight() - H) // 2
+        dlg.geometry("%dx%d+%d+%d" % (W, H, x, y))
+        customtkinter.CTkLabel(dlg, text=t("Start the gaze calibration?"),
+                               wraplength=W - 48).pack(padx=24, pady=(28, 16))
+        row = customtkinter.CTkFrame(dlg, fg_color="transparent")
+        row.pack()
+
+        def close():
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+
+        def ok():
+            close()
+            self.start(confirmed=True)
+
+        customtkinter.CTkButton(row, text=t("OK"), width=110, height=36,
+                                command=ok).pack(side="left", padx=(0, 10))
+        customtkinter.CTkButton(row, text=t("Cancel"), width=110, height=36,
+                                command=close).pack(side="left")
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.bind("<Escape>", lambda _e: close())
+        try:
+            dlg.lift()
+            dlg.focus_force()
+        except Exception:
+            pass
+
+    def start(self, confirmed=False):
+        """`confirmed`: the caller already asked (first launch), so the
+        "Confirm before running" setting does not ask a second time."""
         if self.top is not None:
             return
         # A calibration may already be running from ANOTHER instance
@@ -185,6 +240,12 @@ class GazeCalibrator:
                     cancel=False)
             except Exception as e:
                 logger.error("no-camera notice failed: %s", e)
+            return
+        # Advanced settings > Calibration > "Confirm before running": a
+        # gesture that opens the calibration by mistake should not take
+        # over the screen for half a minute.
+        if not confirmed and confirm_enabled():
+            self._ask_first()
             return
         # Use the real screen size for target placement (gaze-mouse
         # likewise targets physical pixels). pyautogui handles DPI on

@@ -38,7 +38,7 @@ from src.detectors import FaceMesh
 
 BLINK_GRACE_S = 0.15
 # "Ignore blinks" strength (ms) - the per-tool slider's default. 0 = off.
-BLINK_STABLE_DEFAULT_MS = 200
+BLINK_STABLE_DEFAULT_MS = 0
 # Gaze positions averaged into one sample.
 SMOOTH_N = 5
 

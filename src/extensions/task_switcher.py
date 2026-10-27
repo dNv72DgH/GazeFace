@@ -133,7 +133,7 @@ class TaskSwitcher:
                     confirm_ms=int(_cfg().get("confirm_ms", 0) or 0),
                     on_confirm=lambda: self.on_action("confirm"),
                     ignore_blink_ms=int(
-                        _cfg().get("ignore_blink_ms", 200) or 0)))
+                        _cfg().get("ignore_blink_ms", 0) or 0)))
         except Exception as e:
             logger.error("task switcher open failed: %s", e)
             self.close()

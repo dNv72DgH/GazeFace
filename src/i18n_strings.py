@@ -544,8 +544,8 @@ JA = {
     # ---- Help popup texts (src/gui/help_icon.py) ----
     "Change this when the slider moves unsteadily, or falls back too slowly.":
         "スライダの動きが不安定だったり、戻りが遅かったりする時に変更します。",
-    "Holding the gesture for this long switches it on.":
-        "指定時間ジェスチャーを保持し続けるとオンになります。",
+    "Holding the gesture for this long switches it on. Depending on the lighting, short, large noise-like inputs can repeat. Setting the hold time to about 200 ms suppresses them.":
+        "指定時間ジェスチャーを保持し続けるとオンになります。光の当たり方などによっては、ノイズのような短く大きな入力が繰り返されてしまう事があります。保持時間を200ms程度にして、これを抑制する事もできます。",
     "Set this when the slider barely moves and is hard to read.":
         "スライダの動きが小さくて見えにくい時に設定します。",
     "With some gestures head tracking reacts to the movement, so the pointer drifts while you make them. This holds it still, which makes it easier to click exactly where you aimed.":
@@ -627,6 +627,11 @@ JA = {
     "About GazeFace": "GazeFaceについて",
     "GazeFace update": "GazeFace の更新",
     "Updates": "更新",
+    "Calibration": "キャリブレーション",
+    "No face can be detected. Try moving your head a lot or changing your expression. A face may not be detected in a very dark or very bright room.":
+        "顔が検出できません。頭を大きく動かしたり、表情を変えてみて下さい。真っ暗な部屋や明るすぎる部屋では検出できない事があります。",
+    "Confirm before running": "実行前に確認する",
+    "Start the gaze calibration?": "視線キャリブレーションを開始しますか？",
     "Notify me of updates": "更新を通知する",
     "Updating GazeFace... It starts again by itself when the update is done.":
         "GazeFace を更新しています… 更新が終わると自動で起動します。",

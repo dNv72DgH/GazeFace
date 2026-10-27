@@ -135,9 +135,9 @@ class GazeMoveSession:
         try:
             self._blink_grace_s = max(0, int(
                 (ConfigManager().config or {}).get(
-                    "gaze_move_ignore_blink_ms", 200) or 0)) / 1000.0
+                    "gaze_move_ignore_blink_ms", 0) or 0)) / 1000.0
         except Exception:
-            self._blink_grace_s = 0.2
+            self._blink_grace_s = 0.0
         self._dir_since = 0.0
         self._screen_w = 0
         self._screen_h = 0

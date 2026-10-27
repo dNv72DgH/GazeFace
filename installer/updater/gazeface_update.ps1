@@ -96,6 +96,64 @@ function Download([string]$url, [string]$path, [long]$size, [string]$ver) {
     if ($done -ne $size) { throw "download incomplete ($done of $size bytes)" }
 }
 
+# Stop every GazeFace process run from this install, in every session:
+# extra instances too, and the remains of one that never finished exiting.
+# Such remains (seen 2026-10-27: one thread left, stuck in a DLL's detach
+# routine) refuse TerminateProcess - Windows treats them as already
+# exiting - yet still lock the exe, so the setup program could not replace
+# it. Ending their last thread ends them. The crash sentinel goes first,
+# or it would start the app again at once.
+Add-Type -Namespace GfUpd -Name Thr -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern System.IntPtr OpenThread(int access, bool inherit, int tid);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool TerminateThread(System.IntPtr h, int code);
+[DllImport("kernel32.dll")]
+public static extern bool CloseHandle(System.IntPtr h);
+'@
+$appDir = Split-Path -Parent $here
+
+function Get-Ours {
+    @(Get-CimInstance Win32_Process -Filter "Name LIKE 'GazeFace%'" |
+        Where-Object { $_.ExecutablePath -and
+            $_.ExecutablePath.StartsWith($appDir + '\', [StringComparison]::OrdinalIgnoreCase) })
+}
+
+function Wait-Gone([int]$seconds) {
+    $until = (Get-Date).AddSeconds($seconds)
+    while ((Get-Ours).Count -gt 0 -and (Get-Date) -lt $until) {
+        Start-Sleep -Milliseconds 500
+    }
+    return (Get-Ours)
+}
+
+function Stop-Ours {
+    $procs = Get-Ours
+    if ($procs.Count -eq 0) { return }
+    $ordered = @($procs | Where-Object { $_.Name -like '*_Sub.exe' }) +
+               @($procs | Where-Object { $_.Name -notlike '*_Sub.exe' })
+    foreach ($p in $ordered) {
+        Log "stopping $($p.Name) ($($p.ProcessId))"
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    $left = Wait-Gone 10
+    foreach ($p in $left) {
+        Log "$($p.Name) ($($p.ProcessId)) refused to stop - ending its threads"
+        $gp = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+        if (-not $gp) { continue }
+        foreach ($th in $gp.Threads) {
+            $h = [GfUpd.Thr]::OpenThread(0x0001, $false, $th.Id)   # THREAD_TERMINATE
+            if ($h -eq [IntPtr]::Zero) { continue }
+            [void][GfUpd.Thr]::TerminateThread($h, 1)
+            [void][GfUpd.Thr]::CloseHandle($h)
+        }
+    }
+    if ($left.Count -gt 0) {
+        $left = Wait-Gone 10
+        foreach ($p in $left) { Log "still running: $($p.Name) ($($p.ProcessId))" }
+    }
+}
+
 $target = ''
 try {
     Result 'running' '' ''
@@ -131,6 +189,7 @@ try {
 
     Log "installing $target over $installed"
     Result 'installing' $target ''
+    Stop-Ours
     $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
         '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-',
         ('/LOG="' + (Join-Path $here 'setup.log') + '"'))
