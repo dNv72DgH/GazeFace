@@ -16,18 +16,41 @@ $exe  = Join-Path $AppDir 'GazeFace_UI.exe'
 $cat  = Join-Path $AppDir 'driver\gfmouse.cat'   # 仮想マウス ドライバーの catalog
 $name = 'CN=GazeFace Local Signing'
 
-# 以前に作った GazeFace 用の証明書があれば消す
+# 署名用の証明書は、前回のインストールで作ったものを使い回す。
+# 更新のたびに作り直すと署名者が毎回変わり、Windows（アプリを署名で
+# 見分ける新しいプライバシー機能）が別のアプリとみなして、カメラの
+# 許可を聞き直す。許可するまでカメラが使えず、顔では許可を押せない。
+# 鍵は LocalMachine\My に、取り出し不可（NonExportable）で置く。
+# 読めるのは管理者と SYSTEM だけ。
+$now = Get-Date
+$thumbsIn = @{}
 foreach ($store in 'Root', 'TrustedPublisher') {
-    Get-ChildItem "Cert:\LocalMachine\$store" | Where-Object Subject -eq $name | Remove-Item
+    $thumbsIn[$store] = @(Get-ChildItem "Cert:\LocalMachine\$store" |
+        Where-Object Subject -eq $name | ForEach-Object Thumbprint)
 }
+$cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object {
+    $_.Subject -eq $name -and $_.HasPrivateKey -and
+    $_.NotAfter -gt $now.AddDays(30) -and
+    $thumbsIn['Root'] -contains $_.Thumbprint -and
+    $thumbsIn['TrustedPublisher'] -contains $_.Thumbprint
+} | Sort-Object NotAfter -Descending | Select-Object -First 1
 
-# コード署名専用の証明書を作る
-# 鍵は LocalMachine\My に置く（管理者と SYSTEM しか触れない。
-# CurrentUser\My だと、削除までの間に同じユーザーの他のプログラムが読める）
-$cert = New-SelfSignedCertificate -Subject $name -Type CodeSigningCert `
-  -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(10)
+if ($cert) {
+    Write-Host "前回の証明書を使います: $($cert.Thumbprint)"
+}
+else {
+    # 使える証明書がない（初回、または壊れている）: GazeFace 用の古い証明書と鍵を
+    # すべて消してから作り直す
+    foreach ($store in 'Root', 'TrustedPublisher') {
+        Get-ChildItem "Cert:\LocalMachine\$store" | Where-Object Subject -eq $name | Remove-Item
+    }
+    Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -eq $name |
+        ForEach-Object { Remove-Item -LiteralPath ('Cert:\LocalMachine\My\' + $_.Thumbprint) -DeleteKey }
 
-try {
+    $cert = New-SelfSignedCertificate -Subject $name -Type CodeSigningCert `
+      -CertStoreLocation Cert:\LocalMachine\My -KeyExportPolicy NonExportable `
+      -NotAfter (Get-Date).AddYears(10)
+
     # 証明書をこの PC で信頼済みにする
     # （TrustedPublisher にも入れると、ドライバーが確認画面なしで入る）
     $cer = Join-Path $env:TEMP 'gazeface_local.cer'
@@ -36,16 +59,12 @@ try {
         Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\LocalMachine\$store" | Out-Null
     }
     Remove-Item $cer
+    Write-Host "証明書を作りました: $($cert.Thumbprint)"
+}
 
-    # GazeFace の完全版の実行ファイルと、ドライバーの catalog に署名する
-    Set-AuthenticodeSignature -FilePath $exe -Certificate $cert -HashAlgorithm SHA256 | Out-Null
-    Set-AuthenticodeSignature -FilePath $cat -Certificate $cert -HashAlgorithm SHA256 | Out-Null
-}
-finally {
-    # 秘密鍵ごと削除する（以後、この証明書では何にも署名できなくなる）
-    # 途中で失敗しても、鍵だけは必ず消す
-    Remove-Item -LiteralPath ('Cert:\LocalMachine\My\' + $cert.Thumbprint) -DeleteKey
-}
+# GazeFace の完全版の実行ファイルと、ドライバーの catalog に署名する
+Set-AuthenticodeSignature -FilePath $exe -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+Set-AuthenticodeSignature -FilePath $cat -Certificate $cert -HashAlgorithm SHA256 | Out-Null
 
 # 結果を確認する（Valid 以外は失敗として catch へ）
 foreach ($f in $exe, $cat) {

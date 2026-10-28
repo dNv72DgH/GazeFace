@@ -512,9 +512,10 @@ begin
 end;
 
 { The per-PC signing certificate the full edition put in Root and
-  TrustedPublisher (its private key was deleted right after signing).
-  Removed on uninstall and when the standard edition is installed, so the
-  PC's trust settings do not outlive the full edition. }
+  TrustedPublisher, and its key in LocalMachine\My (kept so updates are
+  signed by the same signer). Removed on uninstall and when the standard
+  edition is installed, so the PC's trust settings do not outlive the
+  full edition. }
 procedure RemoveLocalCertificate;
 var
   RC: Integer;
@@ -523,7 +524,10 @@ begin
        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' +
        'foreach ($s in ''Root'', ''TrustedPublisher'') { ' +
        'Get-ChildItem (''Cert:\LocalMachine\'' + $s) | ' +
-       'Where-Object Subject -eq ''' + LocalCertName + ''' | Remove-Item }"',
+       'Where-Object Subject -eq ''' + LocalCertName + ''' | Remove-Item }; ' +
+       'Get-ChildItem Cert:\LocalMachine\My | ' +
+       'Where-Object Subject -eq ''' + LocalCertName + ''' | ' +
+       'ForEach-Object { Remove-Item -LiteralPath (''Cert:\LocalMachine\My\'' + $_.Thumbprint) -DeleteKey }"',
        '', SW_HIDE, ewWaitUntilTerminated, RC) then
     Log('certificate removal did not start: ' + SysErrorMessage(RC))
   else if RC <> 0 then
