@@ -638,6 +638,11 @@ class UpdateBanner:
         self._started, self._stamp = handed
         self._poll()
 
+    @staticmethod
+    def _close_for_install():
+        from src.task_killer import TaskKiller
+        TaskKiller().exit()
+
     def _poll(self):
         if not self._alive():
             return
@@ -654,6 +659,14 @@ class UpdateBanner:
                 self._bar(-1)
                 self._say(t("Installing the update... GazeFace closes for "
                             "a moment and starts again by itself."))
+                # Close properly instead of waiting to be killed: a killed
+                # GazeFace left the webcam busy for two minutes (seen
+                # 2026-10-28), so the updated one started on another
+                # camera. The update task waits for this before it stops
+                # whatever is left; the relaunch helper starts us again.
+                logger.info("update installing - closing GazeFace")
+                self.root.after(500, self._close_for_install)
+                return
             elif st == "running":
                 self._bar(-1)
                 self._say(t("Preparing the update..."))

@@ -189,6 +189,11 @@ try {
 
     Log "installing $target over $installed"
     Result 'installing' $target ''
+    # GazeFace closes itself when it sees 'installing', releasing the
+    # webcam on the way; a killed one left the camera busy for minutes.
+    # Whatever is still there after that (other instances, leftovers) is
+    # stopped.
+    if ((Get-Ours).Count -gt 0) { [void](Wait-Gone 20) }
     Stop-Ours
     $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
         '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-',

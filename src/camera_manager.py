@@ -213,6 +213,12 @@ class ThreadCameras():
         # GUI/assign threads). Serviced in the read loop so all open/
         # release work happens on the camera thread.
         self.swap_requested = None
+        # The camera chosen in the settings, while another one stands in
+        # for it because it would not open (still busy in a process that
+        # is going away, e.g. the copy an update just stopped). Tried
+        # again now and then; taken back as soon as it opens.
+        self.preferred_pending = None
+        self.preferred_until = 0.0
 
         self.loop_exe = Thread(target=self.read_camera_loop,
                                args=(self.stop_flag,),
@@ -248,6 +254,7 @@ class ThreadCameras():
 
         logger.info(f"Try to use camera {self.curr_id}")
         self.pick_camera(self.curr_id)
+        self._stand_in_for(init_id)
         self.assign_done_flag.set()
 
     def pick_camera(self, new_id: int) -> None:
@@ -262,6 +269,7 @@ class ThreadCameras():
         per swap on top of racing the read loop's own recovery opens.
         """
         logger.info(f"Pick camera {new_id} requested")
+        self.preferred_pending = None       # an explicit choice wins
         self.swap_requested = new_id
 
     def _do_pick(self, new_id: int) -> None:
@@ -291,6 +299,8 @@ class ThreadCameras():
                 self.caps[cam_id] = None
 
         self.curr_id = new_id
+        if new_id == self.preferred_pending:
+            self.preferred_pending = None
         # The detector keeps tracking state from the previous camera's
         # frames; after a swap it was seen returning "no face" for a full
         # minute (until the watchdog rebuilt it). Start it fresh.
@@ -425,9 +435,16 @@ class ThreadCameras():
 
         # Probe each index, guarded by a per-open timeout (daemon
         # thread) so a flaky device can't hang the whole scan, and a
-        # late zombie probe can't clobber the chosen capture.
+        # late zombie probe can't clobber the chosen capture. The camera
+        # chosen in the settings first: the first index that opens is
+        # often a different camera.
+        preferred = self._configured_id()
+        order = list(range(MAX_SEARCH_CAMS))
+        if preferred in order:
+            order.remove(preferred)
+            order.insert(0, preferred)
         found = None
-        for i in range(MAX_SEARCH_CAMS):
+        for i in order:
             if self._open_sync_guarded(i, 6.0):
                 found = i
                 break
@@ -436,10 +453,56 @@ class ThreadCameras():
         if found is not None:
             self.curr_id = found
             logger.info("Rescan found working camera %s", found)
+            if found == preferred:
+                self.preferred_pending = None
+            else:
+                self._stand_in_for(preferred)
+            try:
+                from src.detectors import FaceMesh
+                FaceMesh().request_rebuild()
+            except Exception as e:
+                logger.error("detector rebuild after rescan: %s", e)
             return True
         logger.warning("Rescan found no working camera; will keep "
                        "retrying")
         return False
+
+    # How long the camera chosen in the settings is tried again while
+    # another one stands in for it, and how often.
+    PREFERRED_RETRY_FOR_S = 300.0
+    PREFERRED_RETRY_EVERY_S = 10.0
+
+    @staticmethod
+    def _configured_id():
+        try:
+            return ConfigManager().config["camera_id"]
+        except Exception:
+            return None
+
+    def _stand_in_for(self, preferred):
+        if preferred is None or preferred == self.curr_id:
+            return
+        logger.warning("Camera %s (chosen in the settings) did not open - "
+                       "using camera %s for now, trying %s again for %.0f s",
+                       preferred, self.curr_id, preferred,
+                       self.PREFERRED_RETRY_FOR_S)
+        self.preferred_pending = preferred
+        self.preferred_until = time.time() + self.PREFERRED_RETRY_FOR_S
+
+    def retry_preferred(self) -> None:
+        """Camera thread only: try the camera chosen in the settings
+        again, and switch back to it if it opens."""
+        cid = self.preferred_pending
+        if cid is None:
+            return
+        if time.time() > self.preferred_until:
+            logger.info("Camera %s still does not open - staying on "
+                        "camera %s", cid, self.curr_id)
+            self.preferred_pending = None
+            return
+        if self._open_sync_guarded(cid, 6.0):
+            logger.info("Camera %s opens again - switching back to it", cid)
+            self._do_pick(cid)
 
     def _abandon_cap(self, cid, cap, old_pool=None):
         """Give up on a capture whose read() is stuck. Drop our
@@ -620,6 +683,7 @@ class ThreadCameras():
         if desktop_guard.on_secure_desktop():
             NO_CAMERA_RESCAN_S = 1.5
         last_no_cam_scan = 0.0
+        last_preferred_try = time.time()
         yielded = False             # camera handed to another desktop
         # One pass of this loop never takes longer than a camera open
         # (<= 8 s) plus a read timeout; a wall-clock gap far beyond that
@@ -716,6 +780,16 @@ class ThreadCameras():
                 do_recover()
 
             now = time.time()
+
+            if (self.preferred_pending is not None
+                    and now - last_preferred_try
+                    >= self.PREFERRED_RETRY_EVERY_S):
+                last_preferred_try = now
+                try:
+                    self.retry_preferred()
+                except Exception as e:
+                    logger.error("preferred camera retry failed: %s", e)
+                now = time.time()
 
             # Periodic heartbeat: proves the loop is alive and shows
             # whether frames are actually flowing (frames>0) or the loop
