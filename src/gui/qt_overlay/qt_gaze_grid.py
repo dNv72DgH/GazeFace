@@ -274,8 +274,22 @@ class OverlayClient:
                 # "launch failed") are visible.
                 errp = os.path.join(os.environ.get("TEMP", "."),
                                     "GazeFace_overlay_stderr.log")
+                # GPU to draw on: app setting "overlay_gpu" ("auto", an
+                # adapter index, or part of its name, e.g. "610M"); see
+                # overlay_main._pick_gpu.
+                env = dict(os.environ)
+                try:
+                    from src.config_manager import ConfigManager
+                    gpu = ConfigManager()._read_app_setting(
+                        "overlay_gpu", "auto")
+                except Exception:
+                    gpu = "auto"
+                if str(gpu).strip().lower() not in ("", "auto"):
+                    env["GAZEFACE_OVERLAY_GPU"] = str(gpu).strip()
+                else:
+                    env.pop("GAZEFACE_OVERLAY_GPU", None)
                 self.proc = subprocess.Popen(
-                    cmd, cwd=cwd, stdin=subprocess.PIPE,
+                    cmd, cwd=cwd, env=env, stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=open(errp, "ab", buffering=0))
                 self._spawned_at = time.monotonic()
@@ -416,7 +430,7 @@ class QtGazeGrid:
 
     def open(self, rows, cols, cells, on_exit, idle_timeout_s=60.0,
              alpha=0.2, confirm_ms=0, on_confirm=None,
-             ignore_blink_ms=BLINK_STABLE_DEFAULT_MS):
+             ignore_blink_ms=BLINK_STABLE_DEFAULT_MS, message=""):
         import pyautogui
         self.rows = max(1, int(rows))
         self.cols = max(1, int(cols))
@@ -436,7 +450,8 @@ class QtGazeGrid:
             "cmd": "open", "mode": "grid", "rows": self.rows,
             "cols": self.cols, "cells": self._cells_payload(), "sel": 0,
             "accent": _ACCENT, "gradient": self._gradient(),
-            "cellColor": c["cell"], "hlColor": c["highlight"]})
+            "cellColor": c["cell"], "hlColor": c["highlight"],
+            "message": str(message or "")})
         logger.info("QtGazeGrid.open: sent open to overlay, send_ok=%s", ok)
         self._tick()
 

@@ -37,6 +37,8 @@ pyautogui.FAILSAFE = False
 
 # Max buffer number for apply smoothing.
 N_BUFFER = 100
+# Gaze move speed cap (px/s); same as the option slider's maximum.
+GAZE_MOVE_SPEED_MAX = 400.0
 
 # --- Absolute cursor positioning (gaze mode) ---
 # gaze-mouse drives the cursor with user32.SetCursorPos for crisp jumps to
@@ -319,10 +321,11 @@ def _drag_own_window(x=None, y=None) -> None:
         logging.error("own-window drag failed: %s", e)
 
 
-def _set_cursor_absolute(x: int, y: int, screen_w: int, screen_h: int) -> None:
+def _set_cursor_absolute(x: int, y: int, screen_w: int, screen_h: int,
+                         origin_x: int = 0, origin_y: int = 0) -> None:
     global _last_cursor_xy
-    x = max(0, min(screen_w - 1, int(x)))
-    y = max(0, min(screen_h - 1, int(y)))
+    x = max(origin_x, min(origin_x + screen_w - 1, int(x)))
+    y = max(origin_y, min(origin_y + screen_h - 1, int(y)))
     _reveal_cursor()
     if _user32 is not None:
         ok = _user32.SetCursorPos(x, y)
@@ -752,6 +755,8 @@ class MouseController(metaclass=Singleton):
         No-op if one is already running or the UI isn't ready."""
         if self._gaze_move_active:
             return
+        # Profiles saved before the 400 px/s cap can hold more.
+        speed_px_s = min(float(speed_px_s), GAZE_MOVE_SPEED_MAX)
         if self._tk_root is None or not self.is_started:
             return
         # Blocked while a calibration is on screen — including the
@@ -946,7 +951,7 @@ class MouseController(metaclass=Singleton):
                     cfg = ConfigManager().config
                     self.begin_gaze_move(
                         int(cfg.get("gaze_move_display_ms", 2000)),
-                        float(cfg.get("gaze_move_speed", 800)))
+                        float(cfg.get("gaze_move_speed", 50)))
                 except Exception as e:
                     logger.error("jump->gaze move failed: %s", e)
 

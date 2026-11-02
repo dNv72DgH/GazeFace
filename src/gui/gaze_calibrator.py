@@ -86,6 +86,11 @@ POINTS_16 = [
 DURATION_MS = 3000
 SAMPLE_AFTER_MS = 700
 
+# The app's own UI font (bundled, registered at startup by
+# utils.install_font). "Helvetica" is not a Windows font, so Tk fell back
+# to whatever the system picked, which differed between PCs.
+UI_FONT = "IBM Plex Sans JP"
+
 # Centre intro: one sentence at a time, this far apart, before the first
 # target appears.
 INTRO_MS = 2000
@@ -279,10 +284,10 @@ class GazeCalibrator:
 
         self.canvas.create_text(
             self._screen_w // 2, 60, text=title,
-            fill="white", font=("Helvetica", 28, "bold"))
+            fill="white", font=(UI_FONT, 28, "bold"))
         self.canvas.create_text(
             self._screen_w // 2, self._screen_h - 40, text=cancel_hint,
-            fill="#aaaaaa", font=("Helvetica", 12))
+            fill="#aaaaaa", font=(UI_FONT, 12))
 
         # Intro shown in the centre ONE SENTENCE AT A TIME, INTRO_MS apart
         # (replaces the old top-of-screen block of text). The last sentence
@@ -291,7 +296,7 @@ class GazeCalibrator:
         self.prompt_label = self.canvas.create_text(
             self._screen_w // 2, self._screen_h // 2,
             text=t(INTRO_LINES[0]),
-            fill="white", font=("Helvetica", 22))
+            fill="white", font=(UI_FONT, 22))
         self.starting_label = None
 
         self._after_ids.append(self.top.after(INTRO_MS, self._intro_tick))

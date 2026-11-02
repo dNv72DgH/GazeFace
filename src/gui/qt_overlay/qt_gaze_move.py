@@ -38,6 +38,19 @@ def _sign(v):
     return 0 if abs(v) < 1e-9 else (1 if v > 0 else -1)
 
 
+def _monitor_at(x, y, fallback_w, fallback_h):
+    """(x, y, w, h) of the monitor holding the point, native px."""
+    try:
+        import win32api
+        hmon = win32api.MonitorFromPoint((int(x), int(y)), 2)  # NEAREST
+        l, t, r, b = win32api.GetMonitorInfo(hmon)["Monitor"]
+        if r > l and b > t:
+            return l, t, r - l, b - t
+    except Exception:
+        pass
+    return 0, 0, fallback_w, fallback_h
+
+
 class QtGazeMoveSession:
 
     def __init__(self, mc, tk_root, display_ms, speed_px_s, on_done=None):
@@ -191,7 +204,12 @@ class QtGazeMoveSession:
         except Exception:
             x, y = self._screen_w // 2, self._screen_h // 2
         fx, fy = float(x), float(y)
-        W, H = self._screen_w, self._screen_h
+        # The glide stays on the monitor it starts on (the one the overlay
+        # is drawn on). Not the primary's 0..W: on another monitor that
+        # snapped the pointer back onto the primary. Not the whole desktop
+        # either: a monitor Windows lists but nothing shows (this TV
+        # appears as several) would swallow the pointer.
+        X0, Y0, W, H = _monitor_at(x, y, self._screen_w, self._screen_h)
         start = time.monotonic()
         last = start
         while (not self._cancelled and self.mc._gaze_move_active
@@ -202,20 +220,20 @@ class QtGazeMoveSession:
             fx += vec[0] * self.speed * dt
             fy += vec[1] * self.speed * dt
             edge = False
-            if fx <= 0:
-                fx = 0.0
+            if fx <= X0:
+                fx = float(X0)
                 edge = edge or vec[0] < 0
-            elif fx >= W - 1:
-                fx = W - 1
+            elif fx >= X0 + W - 1:
+                fx = float(X0 + W - 1)
                 edge = edge or vec[0] > 0
-            if fy <= 0:
-                fy = 0.0
+            if fy <= Y0:
+                fy = float(Y0)
                 edge = edge or vec[1] < 0
-            elif fy >= H - 1:
-                fy = H - 1
+            elif fy >= Y0 + H - 1:
+                fy = float(Y0 + H - 1)
                 edge = edge or vec[1] > 0
             try:
-                _set_cursor_absolute(int(fx), int(fy), W, H)
+                _set_cursor_absolute(int(fx), int(fy), W, H, X0, Y0)
             except Exception:
                 break
             if edge:

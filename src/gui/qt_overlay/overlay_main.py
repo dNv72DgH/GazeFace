@@ -18,6 +18,7 @@ import os
 import queue
 import sys
 import threading
+import time
 
 # Allow running as a frozen-exe sub-mode or `python -m`.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,8 +29,9 @@ if _ROOT not in sys.path:
 from PySide6.QtCore import (                                   # noqa: E402
     QUrl, QTimer, QAbstractNativeEventFilter)
 from PySide6.QtGui import QSurfaceFormat                       # noqa: E402
-from PySide6.QtQuick import QQuickWindow                       # noqa: E402
-from PySide6.QtQml import QQmlApplicationEngine                # noqa: E402
+from PySide6.QtQuick import QQuickWindow, QQuickImageProvider  # noqa: E402
+from PySide6.QtQml import (                                    # noqa: E402
+    QQmlApplicationEngine, QQmlImageProviderBase)
 from PySide6.QtWidgets import QApplication                     # noqa: E402
 
 from src.gui.qt_overlay import win_effects                     # noqa: E402
@@ -299,12 +301,15 @@ _u32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR,
 _MONITOR_DEFAULTTONEAREST = 2
 
 
-def _pointer_monitor_rect():
-    """(left, top, right, bottom) of the monitor under the pointer, in
-    native pixels, straight from Windows. None if it cannot be read."""
+def _pointer_monitor_rect(at=None):
+    """(left, top, right, bottom) of the monitor under the pointer (or
+    under the native point `at`), in native pixels, straight from
+    Windows. None if it cannot be read."""
     try:
         pt = wintypes.POINT()
-        if not _u32.GetCursorPos(ctypes.byref(pt)):
+        if at is not None:
+            pt.x, pt.y = int(at[0]), int(at[1])
+        elif not _u32.GetCursorPos(ctypes.byref(pt)):
             return None
         hmon = _u32.MonitorFromPoint(pt, _MONITOR_DEFAULTTONEAREST)
         if not hmon:
@@ -317,6 +322,121 @@ def _pointer_monitor_rect():
         return (r.left, r.top, r.right, r.bottom)
     except Exception:
         return None
+
+
+# --- frosted backdrop ------------------------------------------------- #
+# The grid tools used DWM's acrylic (SetWindowCompositionAttribute), which
+# DWM re-blurs at full resolution on every composition while the window
+# is up - on a 4K monitor driven by a weak GPU that alone costs ~10 fps.
+# Instead: one snapshot of the monitor, taken right before the window
+# shows (so it cannot contain the overlay itself), shrunk to
+# BACKDROP_W px, blurred and tinted in QML. A static picture of what is
+# behind; the tools are only up for seconds.
+BACKDROP_W = 320
+
+_g32 = ctypes.WinDLL("gdi32")
+_g32.CreateCompatibleDC.restype = ctypes.c_void_p
+_g32.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+_g32.CreateDIBSection.restype = ctypes.c_void_p
+_g32.CreateDIBSection.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                  ctypes.c_uint, ctypes.c_void_p,
+                                  ctypes.c_void_p, wintypes.DWORD]
+_g32.SelectObject.restype = ctypes.c_void_p
+_g32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_g32.SetStretchBltMode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+_g32.StretchBlt.restype = wintypes.BOOL
+_g32.StretchBlt.argtypes = ([ctypes.c_void_p] + [ctypes.c_int] * 4
+                            + [ctypes.c_void_p] + [ctypes.c_int] * 4
+                            + [wintypes.DWORD])
+_g32.DeleteObject.argtypes = [ctypes.c_void_p]
+_g32.DeleteDC.argtypes = [ctypes.c_void_p]
+_u32.GetDC.restype = ctypes.c_void_p
+_u32.GetDC.argtypes = [ctypes.c_void_p]
+_u32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", ctypes.c_long),
+                ("biHeight", ctypes.c_long), ("biPlanes", wintypes.WORD),
+                ("biBitCount", wintypes.WORD),
+                ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD),
+                ("biXPelsPerMeter", ctypes.c_long),
+                ("biYPelsPerMeter", ctypes.c_long),
+                ("biClrUsed", wintypes.DWORD),
+                ("biClrImportant", wintypes.DWORD)]
+
+
+def _grab_backdrop(rect, w=BACKDROP_W):
+    """The screen inside the native `rect` (l, t, r, b), shrunk to `w` px
+    wide, as a QImage. None on failure. COLORONCOLOR, not HALFTONE: the
+    picture is blurred to mush anyway and it is ~20 ms faster (~60 ms
+    for a 4K monitor, nearly all of it DWM handing the frame over)."""
+    from PySide6.QtGui import QImage
+    l, t, r, b = rect
+    W, H = r - l, b - t
+    if W <= 0 or H <= 0:
+        return None
+    w = max(1, min(int(w), W))
+    h = max(1, round(H * w / W))
+    sdc = _u32.GetDC(None)
+    if not sdc:
+        return None
+    mdc = hbm = old = None
+    try:
+        mdc = _g32.CreateCompatibleDC(sdc)
+        bi = _BITMAPINFOHEADER()
+        bi.biSize = ctypes.sizeof(bi)
+        bi.biWidth, bi.biHeight = w, -h        # top-down
+        bi.biPlanes, bi.biBitCount = 1, 32
+        bits = ctypes.c_void_p()
+        hbm = _g32.CreateDIBSection(mdc, ctypes.byref(bi), 0,
+                                    ctypes.byref(bits), None, 0)
+        if not mdc or not hbm or not bits.value:
+            return None
+        old = _g32.SelectObject(mdc, hbm)
+        _g32.SetStretchBltMode(mdc, 3)          # COLORONCOLOR
+        if not _g32.StretchBlt(mdc, 0, 0, w, h, sdc, l, t, W, H,
+                               0x00CC0020):     # SRCCOPY
+            return None
+        buf = ctypes.string_at(bits.value, w * h * 4)
+        return QImage(buf, w, h, w * 4, QImage.Format_RGB32).copy()
+    except Exception as e:
+        _clog("backdrop: grab failed: %s" % e)
+        return None
+    finally:
+        if old:
+            _g32.SelectObject(mdc, old)
+        if hbm:
+            _g32.DeleteObject(hbm)
+        if mdc:
+            _g32.DeleteDC(mdc)
+        _u32.ReleaseDC(None, sdc)
+
+
+def _abgr_to_argb(g):
+    """0xAABBGGRR (the acrylic tint) -> '#AARRGGBB' for QML."""
+    g = int(g) & 0xFFFFFFFF
+    return "#%02X%02X%02X%02X" % ((g >> 24) & 255, g & 255,
+                                  (g >> 8) & 255, (g >> 16) & 255)
+
+
+class _BackdropProvider(QQuickImageProvider):
+    """Serves the latest snapshot as image://backdrop/<n>."""
+
+    def __init__(self):
+        super().__init__(QQmlImageProviderBase.ImageType.Image)
+        self.img = None
+
+    def requestImage(self, id, size, requestedSize):
+        from PySide6.QtGui import QImage
+        img = self.img if self.img is not None else QImage(1, 1, QImage.Format_RGB32)
+        try:
+            size.setWidth(img.width())
+            size.setHeight(img.height())
+        except Exception:
+            pass
+        return img
 
 
 # Exit code meaning "this overlay can no longer draw - replace me". Any
@@ -340,6 +460,9 @@ class Overlay:
 
         self.app = QApplication(sys.argv)
         self.engine = QQmlApplicationEngine()
+        self._backdrop = _BackdropProvider()
+        self._backdrop_n = 0
+        self.engine.addImageProvider("backdrop", self._backdrop)
         self.engine.load(QUrl.fromLocalFile(QML_PATH))
         roots = self.engine.rootObjects()
         if not roots:
@@ -351,6 +474,7 @@ class Overlay:
         self._fx_done = False
         # Native origin of the monitor the window was last anchored to.
         self._origin = (0, 0)
+        self._mon_rect = None           # native rect of that monitor
         self._hide_timer = None
         self._want_visible = False
         self._hwnd = 0
@@ -741,12 +865,17 @@ class Overlay:
             self.win.setProperty("cells", msg.get("cells") or [])
         if "sel" in msg:
             self.win.setProperty("sel", int(msg.get("sel", 0)))
+        if msg.get("cmd") == "open":
+            self.win.setProperty("centerMessage", str(msg.get("message") or ""))
 
-    def _anchor_to_pointer_screen(self):
-        """Put the window on the monitor the pointer is on, right before it
-        is shown. Returns nothing; records the native origin in
-        self._origin for everything that positions content by absolute
-        screen coordinates (the ring follower, the jump ripple).
+    def _anchor_to_pointer_screen(self, at=None):
+        """Put the window on the monitor the pointer is on (or the one
+        holding the native point `at`), right before it is shown. Returns
+        True if the window moved; records the native origin in
+        self._origin and the monitor in self._mon_rect for everything that
+        positions content by absolute screen coordinates (the ring
+        follower, the jump ripple). Only that one monitor is covered: on a
+        multi-monitor desk the others stay untouched.
 
         History. showFullScreen() fills whichever screen the window is
         currently associated with, and Windows re-enumerates displays
@@ -783,7 +912,8 @@ class Overlay:
         """
         try:
             from PySide6.QtGui import QGuiApplication
-            mon = _pointer_monitor_rect()
+            mon = _pointer_monitor_rect(at)
+            self._mon_rect = mon
             scr = None
             if mon is not None:
                 for cand in QGuiApplication.screens():
@@ -797,7 +927,7 @@ class Overlay:
                 why = ("primary - Qt knows no screen at the pointer's "
                        "monitor %s" % (mon,))
             if scr is None:
-                return
+                return False
             g = scr.geometry()
             was = (self.win.x(), self.win.y())      # read BEFORE moving
             moved = False
@@ -812,8 +942,29 @@ class Overlay:
                 _clog("render: ANCHORED to %s screen %s at %d,%d "
                       "(was at %d,%d)"
                       % (why, scr.name(), g.x(), g.y(), was[0], was[1]))
+            return moved
         except Exception as e:
             _clog("render: anchor failed: %s" % e)
+            return False
+
+    def _follow_to_monitor(self, at=None):
+        """While the window is up, move it to the monitor the pointer (or
+        `at`) is now on, if that is a different one. Cheap when nothing
+        changed: a rectangle test against the monitor it was put on."""
+        if at is None:
+            pt = wintypes.POINT()
+            if not _u32.GetCursorPos(ctypes.byref(pt)):
+                return
+            at = (pt.x, pt.y)
+        m = self._mon_rect
+        if m is None or (m[0] <= at[0] < m[2] and m[1] <= at[1] < m[3]):
+            return                      # unknown monitor, or still on it
+        if self._anchor_to_pointer_screen(at) and self.win.isVisible():
+            self.win.showFullScreen()
+            try:
+                win_effects.force_top(int(self.win.winId()))
+            except Exception:
+                pass
 
     def _show(self, gradient):
         self._want_visible = True
@@ -832,6 +983,7 @@ class Overlay:
         except Exception:
             pass
         self._anchor_to_pointer_screen()
+        self._prepare_backdrop(gradient)
         self.win.showFullScreen()
         try:
             _clog("_show: showFullScreen called, vis=%s" % self.win.isVisible())
@@ -847,6 +999,36 @@ class Overlay:
         # up over a dead renderer — which is the "nothing appears" report.
         before = self._frames
         QTimer.singleShot(1200, lambda: self._after_show_check(before))
+
+    def _prepare_backdrop(self, gradient):
+        """Snapshot the monitor for the grid tools' frosted backdrop (see
+        BACKDROP_W). Only while hidden: a visible window would be in the
+        picture - a re-open mid-fade keeps the snapshot it already has.
+        Without a snapshot, _apply_fx falls back to DWM acrylic."""
+        if self.win.property("mode") in ("jump", "arrows", "ring"):
+            return
+        try:
+            grad = int(gradient) if gradient is not None else 0xB0101214
+        except Exception:
+            grad = 0xB0101214
+        self.win.setProperty("backdropTint", _abgr_to_argb(grad))
+        if self.win.isVisible():
+            return
+        img = None
+        if self._mon_rect is not None:
+            t0 = time.perf_counter()
+            img = _grab_backdrop(self._mon_rect)
+            _clog("backdrop: %s in %.0f ms" % (
+                "%dx%d" % (img.width(), img.height()) if img is not None
+                else "FAILED", (time.perf_counter() - t0) * 1000))
+        if img is None:
+            self.win.setProperty("backdropOn", False)
+            return
+        self._backdrop.img = img
+        self._backdrop_n += 1
+        self.win.setProperty("backdropSrc",
+                             "image://backdrop/%d" % self._backdrop_n)
+        self.win.setProperty("backdropOn", True)
 
     def _window_state(self):
         """Everything between 'a frame was drawn' and 'the user saw it'.
@@ -1023,9 +1205,17 @@ class Overlay:
         self._want_visible = True
         # Anchor BEFORE converting: the snap point is in absolute screen
         # pixels and has to be made relative to whichever monitor the
-        # window ends up on.
+        # window ends up on. That is the monitor holding the snap point
+        # (where the pointer is going), also when the window is still up
+        # from a previous jump on another monitor.
+        try:
+            at = (int(float(msg.get("x", 0))), int(float(msg.get("y", 0))))
+        except Exception:
+            at = None
         if not self.win.isVisible():
-            self._anchor_to_pointer_screen()
+            self._anchor_to_pointer_screen(at)
+        else:
+            self._follow_to_monitor(at)
         try:
             dpr = self.win.screen().devicePixelRatio() or 1.0
         except Exception:
@@ -1080,6 +1270,8 @@ class Overlay:
         try:
             pt = wintypes.POINT()
             ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            # The glide crossed onto another monitor: the ring goes with it.
+            self._follow_to_monitor((pt.x, pt.y))
             dpr = self.win.devicePixelRatio() or 1.0
             # Unchanged values are dropped by QML, so a still cursor draws
             # no frame at all — that is what keeps this from costing more
@@ -1122,6 +1314,9 @@ class Overlay:
         if self.win.property("mode") in ("jump", "arrows", "ring"):
             win_effects.disable_acrylic(hwnd)
             self._last_fx = "acrylic-off"
+        elif self.win.property("backdropOn"):
+            win_effects.disable_acrylic(hwnd)   # QML draws the frost
+            self._last_fx = "backdrop"
         else:
             try:
                 grad = int(gradient) if gradient is not None else 0xB0101214
@@ -1140,7 +1335,105 @@ class Overlay:
         self.app.exec()
 
 
+class _ADAPTER_DESC1(ctypes.Structure):
+    _fields_ = [("Description", ctypes.c_wchar * 128),
+                ("VendorId", ctypes.c_uint), ("DeviceId", ctypes.c_uint),
+                ("SubSysId", ctypes.c_uint), ("Revision", ctypes.c_uint),
+                ("DedicatedVideoMemory", ctypes.c_size_t),
+                ("DedicatedSystemMemory", ctypes.c_size_t),
+                ("SharedSystemMemory", ctypes.c_size_t),
+                ("LuidLow", wintypes.DWORD), ("LuidHigh", wintypes.LONG),
+                ("Flags", ctypes.c_uint)]
+
+
+def _com_call(obj, index, restype, *args):
+    """Call vtable slot `index` of the COM object pointer `obj`. Pass
+    out-parameters as ctypes objects: they go by address."""
+    vtbl = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))
+    conv = [a if isinstance(a, ctypes.c_uint)
+            else ctypes.c_void_p(ctypes.addressof(a)) for a in args]
+    fn = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p,
+                            *[type(a) for a in conv])(vtbl[0][index])
+    return fn(obj, *conv)
+
+
+def _pick_gpu():
+    """Render on the most capable GPU, not on DXGI adapter 0.
+
+    Qt's D3D11 backend takes adapter 0, which is whatever Windows lists
+    first. On a desktop with a weak integrated GPU driving one monitor
+    (here a Radeon 610M, beside an RTX 5070) that is the integrated one,
+    and the frosted, alpha-blended 4K overlay drops to ~42 fps on it
+    (60 on the RTX, measured with the real window). The adapter with the
+    most dedicated video memory is the one to draw with; Windows copies
+    the frames across to a monitor driven by the other GPU, which costs
+    far less than the drawing.
+
+    Sets QT_D3D_ADAPTER_INDEX (same order as Qt enumerates: DXGI
+    EnumAdapters1). Left alone when already set, so it can be forced.
+    GAZEFACE_OVERLAY_GPU (from the app setting "overlay_gpu", passed by
+    the main process) overrides the pick: an adapter index, or part of
+    an adapter's name ("610M", "RTX")."""
+    if os.environ.get("QT_D3D_ADAPTER_INDEX"):
+        _clog("gpu: QT_D3D_ADAPTER_INDEX=%s set from outside"
+              % os.environ["QT_D3D_ADAPTER_INDEX"])
+        return
+    try:
+        dxgi = ctypes.WinDLL("dxgi")
+        iid = (ctypes.c_ubyte * 16)(*bytes.fromhex(
+            "78ae0a776ff2ba4da829253c83d1b387"))    # IID_IDXGIFactory1
+        factory = ctypes.c_void_p()
+        if dxgi.CreateDXGIFactory1(ctypes.byref(iid),
+                                   ctypes.byref(factory)) != 0:
+            return
+        found = []
+        try:
+            i = 0
+            while i < 16:
+                ad = ctypes.c_void_p()
+                # IDXGIFactory1::EnumAdapters1 (slot 12)
+                if _com_call(factory, 12, ctypes.c_long, ctypes.c_uint(i),
+                             ad) != 0:
+                    break
+                try:
+                    d = _ADAPTER_DESC1()
+                    # IDXGIAdapter1::GetDesc1 (slot 10)
+                    if _com_call(ad, 10, ctypes.c_long, d) == 0:
+                        found.append((i, d.Description, d.Flags,
+                                      int(d.DedicatedVideoMemory)))
+                finally:
+                    _com_call(ad, 2, ctypes.c_ulong)          # Release
+                i += 1
+        finally:
+            _com_call(factory, 2, ctypes.c_ulong)             # Release
+        hw = [a for a in found if not (a[2] & 2)]  # DXGI_ADAPTER_FLAG_SOFTWARE
+        want = os.environ.get("GAZEFACE_OVERLAY_GPU", "").strip()
+        best = None
+        if want:
+            if want.isdigit():
+                best = next((a for a in found if a[0] == int(want)), None)
+            else:
+                best = next((a for a in hw
+                             if want.lower() in a[1].lower()), None)
+            if best is None:
+                _clog("gpu: overlay_gpu=%r matches no adapter, picking"
+                      % want)
+        forced = best is not None
+        if best is None:
+            if len(hw) < 2:
+                return
+            best = max(hw, key=lambda a: a[3])
+        _clog("gpu: adapters %s -> using %d %s%s" % (
+            ["%d:%s(%dMB)" % (a[0], a[1], a[3] >> 20) for a in found],
+            best[0], best[1], " (overlay_gpu)" if forced else ""))
+        if best[0] != 0:
+            os.environ["QT_D3D_ADAPTER_INDEX"] = str(best[0])
+    except Exception as e:
+        _clog("gpu: adapter pick failed: %s" % e)
+
+
 def main():
+    _pick_gpu()
     try:
         Overlay().run()
     except SystemExit:

@@ -37,15 +37,15 @@ JUMP_DELAY_MAX_MS = 5000
 SNAP_MIN_PX = 20
 SNAP_MAX_PX = 400
 SNAP_DEFAULT_PX = 120
-JUMP_DELAY_DEFAULT_MS = 1000
+JUMP_DELAY_DEFAULT_MS = 200
 
 # Gaze move: arrow-display duration (ms) and move speed (px/s).
 GM_DISPLAY_MIN_MS = 500
 GM_DISPLAY_MAX_MS = 5000
 GM_DISPLAY_DEFAULT_MS = 2000
 GM_SPEED_MIN = 1
-GM_SPEED_MAX = 3000
-GM_SPEED_DEFAULT = 800
+GM_SPEED_MAX = 400
+GM_SPEED_DEFAULT = 50
 
 
 class ActionOptionsPopup:
@@ -183,7 +183,7 @@ class ActionOptionsPopup:
         self._gm_speed_dragging = False
         self.gm_speed_slider = customtkinter.CTkSlider(
             master=srow, from_=GM_SPEED_MIN, to=GM_SPEED_MAX, width=220,
-            number_of_steps=(GM_SPEED_MAX - GM_SPEED_MIN) // 50,
+            number_of_steps=GM_SPEED_MAX - GM_SPEED_MIN,
             command=self._on_gm_speed_drag)
         self.gm_speed_slider.bind(
             "<Button-1>",

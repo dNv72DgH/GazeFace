@@ -253,13 +253,19 @@ class Launcher:
                                "deferred open — skipping (g=%s self.grid=%s)",
                                g is not None, self.grid is not None)
                 return
+            from src.extensions.gaze_tool_setup import setup_message
+            confirm_ms = int(_launcher_cfg().get("confirm_ms", 0) or 0)
+            root_items = self._page("root").get("items", {}) or {}
+            no_items = not any(_norm(v) for v in root_items.values())
             g.open(self._rows, self._cols, cells, on_exit=self.close,
                    idle_timeout_s=60.0,
                    alpha=float(_launcher_cfg().get("alpha", 0.2)),
-                   confirm_ms=int(_launcher_cfg().get("confirm_ms", 0) or 0),
+                   confirm_ms=confirm_ms,
                    on_confirm=lambda: self.on_action("confirm"),
                    ignore_blink_ms=int(
-                       _launcher_cfg().get("ignore_blink_ms", 0) or 0))
+                       _launcher_cfg().get("ignore_blink_ms", 0) or 0),
+                   message=setup_message(self.gesture_map(), confirm_ms,
+                                         no_items))
             logger.info("Launcher: deferred grid.open dispatched")
         except Exception as e:
             logger.error("Launcher deferred grid.open FAILED: %s", e,

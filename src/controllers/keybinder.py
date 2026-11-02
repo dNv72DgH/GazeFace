@@ -463,7 +463,7 @@ class Keybinder(metaclass=Singleton):
             return
 
         delay_ms = int(ConfigManager().config.get(
-            "pointer_jump_delay_ms", 1000))
+            "pointer_jump_delay_ms", 200))
         MouseController().begin_pointer_jump(delay_ms)
 
     def _calibration_running(self) -> bool:
@@ -491,7 +491,7 @@ class Keybinder(metaclass=Singleton):
             return
         cfg = ConfigManager().config
         display_ms = int(cfg.get("gaze_move_display_ms", 2000))
-        speed = float(cfg.get("gaze_move_speed", 800))
+        speed = float(cfg.get("gaze_move_speed", 50))
         MouseController().begin_gaze_move(display_ms, speed)
 
     def _fire_gaze_launcher(self) -> None:
@@ -611,7 +611,7 @@ class Keybinder(metaclass=Singleton):
         and pointer movement does not touch it.
         """
         cfg = ConfigManager().config
-        if not cfg.get("chattering_prevention_enabled", False):
+        if not cfg.get("chattering_prevention_enabled", True):
             return False
         if self.last_input_ts is None:
             return False

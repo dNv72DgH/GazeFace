@@ -224,16 +224,20 @@ class ClipboardHistory:
         from src.gui.gaze_grid_factory import make_gaze_grid
         self.grid = make_gaze_grid(mc._tk_root)
         cells = self._page_cells()
+        from src.extensions.gaze_tool_setup import setup_message
+        confirm_ms = int(_cb_cfg().get("confirm_ms", 0) or 0)
+        message = setup_message(self.gesture_map(), confirm_ms)
         try:
             mc._tk_root.after(
                 0, lambda: self.grid.open(
                     self._rows, self._cols, cells, on_exit=self.close,
                     idle_timeout_s=60.0,
                     alpha=float(_cb_cfg().get("alpha", 0.2)),
-                    confirm_ms=int(_cb_cfg().get("confirm_ms", 0) or 0),
+                    confirm_ms=confirm_ms,
                     on_confirm=lambda: self.on_action("confirm"),
                     ignore_blink_ms=int(
-                        _cb_cfg().get("ignore_blink_ms", 0) or 0)))
+                        _cb_cfg().get("ignore_blink_ms", 0) or 0),
+                    message=message))
         except Exception as e:
             logger.error("clipboard open failed: %s", e)
             self.close()

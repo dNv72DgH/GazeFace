@@ -36,14 +36,90 @@ Window {
     // Content fade (the acrylic backdrop is a native effect and appears
     // instantly; the foreground fades in/out over it). Driven from Python.
     property real contentOpacity: 0
+    // Grid tools' frosted backdrop: a small snapshot of the monitor taken
+    // before showing (image://backdrop), blurred and tinted here instead
+    // of DWM acrylic (see BACKDROP_W in overlay_main.py).
+    property bool backdropOn: false
+    property string backdropSrc: ""
+    property color backdropTint: "#B0141210"
     // Grid notice: flash one cell and show a short message (e.g. the
     // clipboard's "Added to pinned"). Bump noticeTick to play it.
     property int noticeCell: -1
     property string noticeText: ""
     property color noticeColor: "#D9622B"
     property int noticeTick: 0
+    // Grid setup message (no confirm / exit gesture, no items), shown in
+    // the middle for as long as the grid is up.
+    property string centerMessage: ""
 
     signal escPressed()
+
+    // Gaze-jump ripple size, as a share of the screen height: the same on
+    // every resolution and display scaling. 1.0 = the size it was designed
+    // at (a 1440-unit-high screen: 4K at 150 %).
+    readonly property real jumpUnit: height / 1440
+
+    // Drop shadow rendered at a reduced resolution: a blurred black copy of
+    // `target`, drawn under it. Only the shadow is low-res (at most
+    // maxShadowW device px across the screen); the target itself is drawn
+    // without a layer, so text and edges stay sharp. Looks like
+    // MultiEffect's own shadow. `knockout` keeps the shadow from showing
+    // through a translucent (or faded) target. The target must sit at the shadow's
+    // level with no transform of its own: put scale / opacity on a shared
+    // parent.
+    component LowShadow: Item {
+        id: sh
+        required property Item target
+        property color color: "#5A000000"
+        property real blur: 0.7          // as MultiEffect.shadowBlur
+        property real offsetY: 10
+        property bool knockout: true
+        property int maxShadowW: 1280
+        readonly property real pad: 40   // room for the blur (blurMax 32)
+        readonly property real dpr: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+        // shrink of the shadow pipeline in logical units (1 = full res)
+        readonly property real k: Math.min(1, maxShadowW / Math.max(1, Screen.width * dpr))
+        x: target.x - pad; y: target.y - pad + offsetY
+        width: target.width + pad * 2; height: target.height + pad * 2
+        ShaderEffectSource {
+            id: shSrc
+            visible: false
+            sourceItem: sh.target
+            sourceRect: Qt.rect(-sh.pad, -sh.pad, sh.width, sh.height)
+            width: sh.width * sh.k; height: sh.height * sh.k
+            textureSize: Qt.size(Math.max(1, Math.ceil(width * sh.dpr)),
+                                 Math.max(1, Math.ceil(height * sh.dpr)))
+        }
+        // The target as it sits on screen, for the knockout.
+        ShaderEffectSource {
+            id: shMask
+            visible: false
+            live: sh.knockout
+            sourceItem: sh.knockout ? sh.target : null
+            sourceRect: Qt.rect(-sh.pad, -sh.pad + sh.offsetY, sh.width, sh.height)
+            width: shSrc.width; height: shSrc.height
+            textureSize: shSrc.textureSize
+        }
+        MultiEffect {
+            width: shSrc.width; height: shSrc.height
+            transformOrigin: Item.TopLeft
+            scale: 1 / sh.k
+            source: shSrc
+            autoPaddingEnabled: false
+            brightness: -1
+            blurEnabled: true
+            blur: sh.blur
+            blurMax: Math.max(1, Math.round(32 * sh.k))
+            maskEnabled: sh.knockout
+            maskSource: shMask
+            maskInverted: true
+            // knock out only well inside the target: its anti-aliased
+            // edge keeps the shadow under it (no light fringe)
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 0.2
+            opacity: sh.color.a
+        }
+    }
 
     // Card geometry derived from the screen + grid so the layout always
     // fills the screen with comfortable gutters.
@@ -64,6 +140,36 @@ Window {
     ]
 
     Item {
+        id: backdrop
+        anchors.fill: parent
+        visible: win.backdropOn && win.mode === "grid"
+        opacity: win.contentOpacity
+        Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+        Image {
+            id: bdImg
+            visible: false
+            source: win.backdropSrc
+            cache: false
+            smooth: true
+        }
+        MultiEffect {
+            source: bdImg
+            visible: bdImg.status === Image.Ready
+            width: bdImg.sourceSize.width; height: bdImg.sourceSize.height
+            transformOrigin: Item.TopLeft
+            scale: win.width / Math.max(1, bdImg.sourceSize.width)
+            autoPaddingEnabled: false
+            blurEnabled: true
+            blur: 1.0
+            blurMax: 32
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: win.backdropTint
+        }
+    }
+
+    Item {
         id: content
         anchors.fill: parent
         focus: true
@@ -77,7 +183,7 @@ Window {
             visible: win.mode === "grid"
             Repeater {
                 model: win.mode === "grid" ? win.cells : []
-                delegate: Rectangle {
+                delegate: Item {
                     id: tile
                     required property int index
                     required property var modelData
@@ -85,31 +191,34 @@ Window {
 
                     x: win.cellX(index); y: win.cellY(index)
                     width: win.cellW; height: win.cellH
-                    radius: Math.round(Math.min(width, height) * 0.10)
-                    // Shared colours: app-specific cells use the highlight
-                    // colour, the rest the cell ("mount") colour; selection
-                    // is a brighter alpha of the same base.
-                    color: {
-                        var base = modelData.app ? win.hlColor : win.cellColor
-                        return Qt.rgba(base.r, base.g, base.b,
-                                       isSel ? 0.95 : 0.72)
-                    }
-                    Behavior on color { ColorAnimation { duration: 160 } }
 
                     transformOrigin: Item.Center
                     scale: isSel ? 1.085 : 1.0
                     z: isSel ? 2 : 0
                     Behavior on scale { NumberAnimation { duration: 190; easing.type: Easing.OutBack; easing.overshoot: 1.1 } }
 
-                    layer.enabled: true
-                    layer.effect: MultiEffect {
-                        shadowEnabled: true
-                        shadowColor: tile.isSel ? "#73000000" : "#5A000000"
-                        shadowBlur: tile.isSel ? 0.95 : 0.5
-                        shadowVerticalOffset: tile.isSel ? 16 : 8
-                        Behavior on shadowBlur { NumberAnimation { duration: 190 } }
-                        Behavior on shadowVerticalOffset { NumberAnimation { duration: 190 } }
+                    LowShadow {
+                        target: tileBody
+                        color: tile.isSel ? "#73000000" : "#5A000000"
+                        blur: tile.isSel ? 0.95 : 0.5
+                        offsetY: tile.isSel ? 16 : 8
+                        Behavior on blur { NumberAnimation { duration: 190 } }
+                        Behavior on offsetY { NumberAnimation { duration: 190 } }
                     }
+
+                  Rectangle {
+                    id: tileBody
+                    anchors.fill: parent
+                    radius: Math.round(Math.min(width, height) * 0.10)
+                    // Shared colours: app-specific cells use the highlight
+                    // colour, the rest the cell ("mount") colour; selection
+                    // is a brighter alpha of the same base.
+                    color: {
+                        var base = tile.modelData.app ? win.hlColor : win.cellColor
+                        return Qt.rgba(base.r, base.g, base.b,
+                                       tile.isSel ? 0.95 : 0.72)
+                    }
+                    Behavior on color { ColorAnimation { duration: 160 } }
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -139,6 +248,7 @@ Window {
                             wrapMode: Text.WordWrap
                         }
                     }
+                  }
                 }
             }
 
@@ -166,6 +276,32 @@ Window {
                     running: false
                     from: 0; to: 1; duration: 750; easing.type: Easing.OutCubic
                 }
+            }
+        }
+
+        // Setup message: a card in the middle of the screen.
+        Rectangle {
+            visible: win.mode === "grid" && win.centerMessage !== ""
+            z: 20
+            anchors.centerIn: parent
+            width: Math.round(win.width * 0.6)
+            height: centerLabel.implicitHeight + Math.round(win.height * 0.08)
+            radius: Math.round(win.height * 0.025)
+            color: "#F0202124"
+            border.width: 3
+            border.color: win.noticeColor
+            Text {
+                id: centerLabel
+                anchors.centerIn: parent
+                width: parent.width - Math.round(win.height * 0.08)
+                text: win.centerMessage
+                color: "#F3F3F3"
+                font.family: "Segoe UI Variable Display"
+                font.pixelSize: Math.max(16, Math.round(win.height * 0.03))
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                lineHeight: 1.25
             }
         }
 
@@ -237,24 +373,21 @@ Window {
                     y: parent.cy + modelData.dy * parent.ey - height / 2
                     transformOrigin: Item.Center
                     // NOTE: the Item is NOT rotated — only the Shape inside
-                    // is. That keeps the drop shadow (applied to this Item's
-                    // layer) pointing straight DOWN like the centre ring's,
-                    // instead of rotating with each arrow.
+                    // is. That keeps the drop shadow pointing straight DOWN
+                    // like the centre ring's, instead of rotating with each
+                    // arrow.
                     scale: isSel ? 2.1 : 1.0
                     opacity: isSel ? 1.0 : 0.55
                     Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack; easing.overshoot: 1.2 } }
                     Behavior on opacity { NumberAnimation { duration: 180 } }
-                    layer.enabled: true
-                    layer.effect: MultiEffect {
-                        shadowEnabled: true
-                        // Lighter drop shadow (was #88000000).
-                        shadowColor: "#5A000000"
-                        shadowBlur: 0.7
-                        // Same light position as the centre ring.
-                        shadowVerticalOffset: 10
-                    }
+                    // Lighter drop shadow (was #88000000), same light
+                    // position as the centre ring.
+                    LowShadow { target: arrowBody }
                     // Solid arrow (triangle head + thicker stem) pointing
                     // up; the Shape carries the per-direction rotation.
+                    Item {
+                    id: arrowBody
+                    anchors.fill: parent
                     Shape {
                         anchors.fill: parent
                         transformOrigin: Item.Center
@@ -272,33 +405,33 @@ Window {
                             PathLine { x: arrow.width * 0.50; y: arrow.height * 0.06 }
                         }
                     }
+                    }
                 }
             }
 
             // Centre target — a ring, highlighted when gaze is central.
-            Rectangle {
+            Item {
                 id: centerDot
                 readonly property bool isSel: win.arrowDir === ""
-                width: parent.baseSz * 0.72; height: width; radius: width / 2
+                width: parent.baseSz * 0.72; height: width
                 x: parent.cx - width / 2
                 y: parent.cy - height / 2
-                color: "transparent"
-                border.width: Math.max(4, width * 0.16)
-                border.color: win.centerColor
-                antialiasing: true
                 transformOrigin: Item.Center
                 scale: centerDot.isSel ? 2.1 : 1.0
                 opacity: centerDot.isSel ? 1.0 : 0.55
                 Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
                 Behavior on opacity { NumberAnimation { duration: 180 } }
-                layer.enabled: true
-                layer.effect: MultiEffect {
-                    shadowEnabled: true
-                    // Lighter drop shadow (was #88000000).
-                    shadowColor: "#5A000000"
-                    shadowBlur: 0.7
-                    // Light from higher overhead: longer downward drop.
-                    shadowVerticalOffset: 10
+                // Lighter drop shadow (was #88000000); light from higher
+                // overhead: longer downward drop.
+                LowShadow { target: centerBody }
+                Rectangle {
+                    id: centerBody
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: Math.max(4, width * 0.16)
+                    border.color: win.centerColor
+                    antialiasing: true
                 }
             }
         }
@@ -326,58 +459,70 @@ Window {
 
         // Two expanding rings (the 2nd lags for a sonar feel), each with a
         // soft drop shadow.
-        Rectangle {
+        Item {
             readonly property real p: jumpLayer.a
-            width: 70 + p * 300; height: width; radius: width / 2
+            width: (70 + p * 300) * win.jumpUnit; height: width
             x: win.jumpX - width / 2; y: win.jumpY - height / 2
-            color: "transparent"
-            border.width: Math.max(2, 10 * (1 - p))
-            border.color: win.jumpRingColor
-            antialiasing: true
             opacity: 1 - p
-            layer.enabled: true
-            layer.effect: MultiEffect {
-                shadowEnabled: true
-                shadowColor: "#80000000"
-                shadowBlur: 0.8
-                shadowVerticalOffset: 4
+            LowShadow {
+                target: ring1
+                color: "#80000000"
+                blur: 0.8
+                offsetY: 4 * win.jumpUnit
+            }
+            Rectangle {
+                id: ring1
+                anchors.fill: parent
+                radius: width / 2
+                color: "transparent"
+                border.width: Math.max(2, 10 * (1 - parent.p)) * win.jumpUnit
+                border.color: win.jumpRingColor
+                antialiasing: true
             }
         }
-        Rectangle {
+        Item {
             readonly property real p: Math.max(0, jumpLayer.a - 0.18) / 0.82
-            width: 70 + p * 220; height: width; radius: width / 2
+            width: (70 + p * 220) * win.jumpUnit; height: width
             x: win.jumpX - width / 2; y: win.jumpY - height / 2
-            color: "transparent"
-            border.width: Math.max(1, 7 * (1 - p))
-            border.color: win.jumpRingColor
-            antialiasing: true
             opacity: (jumpLayer.a > 0.18 ? 1 : 0) * (1 - p) * 0.8
-            layer.enabled: true
-            layer.effect: MultiEffect {
-                shadowEnabled: true
-                shadowColor: "#80000000"
-                shadowBlur: 0.8
-                shadowVerticalOffset: 4
+            LowShadow {
+                target: ring2
+                color: "#80000000"
+                blur: 0.8
+                offsetY: 4 * win.jumpUnit
+            }
+            Rectangle {
+                id: ring2
+                anchors.fill: parent
+                radius: width / 2
+                color: "transparent"
+                border.width: Math.max(1, 7 * (1 - parent.p)) * win.jumpUnit
+                border.color: win.jumpRingColor
+                antialiasing: true
             }
         }
 
         // Centre dot — pops then fades. Greyscale fill with a white rim.
-        Rectangle {
-            width: 30; height: 30; radius: 15
+        Item {
+            width: 30 * win.jumpUnit; height: width
             x: win.jumpX - width / 2; y: win.jumpY - height / 2
-            color: win.jumpDotColor
-            border.width: 3
-            border.color: "#FFFFFF"
-            antialiasing: true
             transformOrigin: Item.Center
             scale: 0.6 + jumpLayer.a * 1.0
             opacity: 1 - jumpLayer.a
-            layer.enabled: true
-            layer.effect: MultiEffect {
-                shadowEnabled: true
-                shadowColor: "#80000000"
-                shadowBlur: 0.9
-                shadowVerticalOffset: 5
+            LowShadow {
+                target: jumpDot
+                color: "#80000000"
+                blur: 0.9
+                offsetY: 5 * win.jumpUnit
+            }
+            Rectangle {
+                id: jumpDot
+                anchors.fill: parent
+                radius: width / 2
+                color: win.jumpDotColor
+                border.width: 3 * win.jumpUnit
+                border.color: "#FFFFFF"
+                antialiasing: true
             }
         }
     }

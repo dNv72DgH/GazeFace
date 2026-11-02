@@ -85,11 +85,31 @@ UPDATE_MS = 33
 ALPHA_POLL_TICKS = 30
 _live_alpha = None
 
+# Size, as a percentage of DIAL (Advanced settings > Sub-monitor).
+SCALE_MIN = 20
+SCALE_MAX = 200
+_live_scale = None
+
 
 def set_live_alpha(alpha):
     """Opacity (0.2..1.0) the sub-monitor should show from now on."""
     global _live_alpha
     _live_alpha = alpha
+
+
+def set_live_scale(percent):
+    """Size (SCALE_MIN..SCALE_MAX %) the sub-monitor should show from now
+    on."""
+    global _live_scale
+    _live_scale = percent
+
+
+def _clamp_scale(percent):
+    try:
+        p = int(round(float(percent)))
+    except (TypeError, ValueError):
+        p = 100
+    return max(SCALE_MIN, min(SCALE_MAX, p))
 
 
 class GestureSubMonitor:
@@ -108,6 +128,10 @@ class GestureSubMonitor:
         self._drag_off = None
         self._alpha = None       # last applied window opacity
         self._alpha_ticks = 0
+        self._scale = None       # last applied size (%)
+        self._dial = DIAL        # window side and arc geometry at that size
+        self._arc_w = ARC_W
+        self._inset = ARC_INSET
         self._visible = False
         self._last_state = None  # last logged window state (dedupes SUBMON)
         self._state_ticks = 0
@@ -140,6 +164,44 @@ class GestureSubMonitor:
                 self._win.attributes("-alpha", a)
             except Exception:
                 pass
+        if _live_scale is not None:
+            self._apply_scale(_live_scale)
+        elif force or self._alpha_ticks % ALPHA_POLL_TICKS == 0:
+            try:
+                self._apply_scale(ConfigManager()._read_app_setting(
+                    "submonitor_scale", 100))
+            except Exception:
+                pass
+
+    def _geometry_for(self, percent):
+        """Window side, stroke width and stroke inset at `percent`."""
+        f = _clamp_scale(percent) / 100.0
+        dial = max(16, int(round(DIAL * f)))
+        arc_w = max(3, int(round(ARC_W * f)))
+        return dial, arc_w, arc_w // 2 + max(1, int(round(2 * f)))
+
+    def _apply_scale(self, percent):
+        """Resize the window and redraw the dial when the size changed.
+        The window keeps its centre, so the meter grows and shrinks in
+        place."""
+        p = _clamp_scale(percent)
+        if p == self._scale or self._win is None:
+            return
+        old = self._dial
+        self._scale = p
+        self._dial, self._arc_w, self._inset = self._geometry_for(p)
+        try:
+            cx = self._win.winfo_x() + old // 2
+            cy = self._win.winfo_y() + old // 2
+            x = max(0, min(self._win.winfo_screenwidth() - self._dial,
+                           cx - self._dial // 2))
+            y = max(0, min(self._win.winfo_screenheight() - self._dial,
+                           cy - self._dial // 2))
+            self._win.geometry("%dx%d+%d+%d" % (self._dial, self._dial, x, y))
+            self._canvas.configure(width=self._dial, height=self._dial)
+            self._build_dial()
+        except Exception as e:
+            logger.error("sub-monitor resize failed: %s", e)
 
     def show(self):
         if self._win is None:
@@ -191,7 +253,11 @@ class GestureSubMonitor:
         #
         # Off-screen so the brief unstyled, captioned window is never
         # visible; the real position is set at the end of this method.
-        self._win.geometry("%dx%d+%d+%d" % (DIAL, DIAL, -3000, -3000))
+        self._scale = _clamp_scale(ConfigManager()._read_app_setting(
+            "submonitor_scale", 100))
+        self._dial, self._arc_w, self._inset = self._geometry_for(self._scale)
+        dial = self._dial
+        self._win.geometry("%dx%d+%d+%d" % (dial, dial, -3000, -3000))
         try:
             self._win.update_idletasks()
             self._win.update()
@@ -230,11 +296,11 @@ class GestureSubMonitor:
         y = int(ConfigManager()._read_app_setting("submonitor_y", 40))
         # Clamp on-screen in case the saved position is from another
         # monitor layout.
-        x = max(0, min(self._win.winfo_screenwidth() - DIAL, x))
-        y = max(0, min(self._win.winfo_screenheight() - DIAL, y))
-        self._win.geometry(f"{DIAL}x{DIAL}+{x}+{y}")
+        x = max(0, min(self._win.winfo_screenwidth() - dial, x))
+        y = max(0, min(self._win.winfo_screenheight() - dial, y))
+        self._win.geometry(f"{dial}x{dial}+{x}+{y}")
 
-        self._canvas = tk.Canvas(self._win, width=DIAL, height=DIAL,
+        self._canvas = tk.Canvas(self._win, width=dial, height=dial,
                                  bg=BG, highlightthickness=0, bd=0)
         self._canvas.pack(fill="both", expand=True)
         self._build_dial()
@@ -251,8 +317,8 @@ class GestureSubMonitor:
         # Record what was asked for next to what Windows actually did, so
         # a silent no-op is visible in the log instead of only on screen.
         logger.info("SUBMON built: asked pos=%d,%d size=%dx%d "
-                    "transparentcolor=%s alpha=%.2f",
-                    x, y, DIAL, DIAL, BG, self._alpha)
+                    "transparentcolor=%s alpha=%.2f scale=%d%%",
+                    x, y, dial, dial, BG, self._alpha, self._scale)
         self._win.update_idletasks()
         self._log_state("after build")
 
@@ -293,16 +359,16 @@ class GestureSubMonitor:
         c = self._canvas
         c.delete("dial")
         self._last = {}
-        a0, a1 = ARC_INSET, DIAL - ARC_INSET
+        a0, a1 = self._inset, self._dial - self._inset
         self._items = {
             "track": c.create_arc(a0, a0, a1, a1, start=ARC_START,
                                   extent=-ARC_SWEEP, style=tk.ARC,
-                                  outline=BAR_TRACK, width=ARC_W,
+                                  outline=BAR_TRACK, width=self._arc_w,
                                   tags="dial"),
             # extent is set per update; a zero sweep draws nothing
             "fill": c.create_arc(a0, a0, a1, a1, start=ARC_START,
                                  extent=0, style=tk.ARC, outline=BAR_IDLE,
-                                 width=ARC_W, tags="dial"),
+                                 width=self._arc_w, tags="dial"),
         }
 
     def _set(self, key, **kw):

@@ -174,6 +174,34 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             "submonitor_alpha", 1.0)) * 100))
         self.submon_alpha_slider.set(max(20, min(100, cur)))
 
+        from src.gui import sub_monitor
+        zrow = self._row_frame()
+        zlbl = customtkinter.CTkLabel(
+            master=zrow, text=t("Size (%)"), anchor="w")
+        zlbl.cget("font").configure(size=12)
+        zlbl.pack(side="left", padx=(0, 10))
+        self.submon_scale_slider = customtkinter.CTkSlider(
+            master=zrow, from_=sub_monitor.SCALE_MIN,
+            to=sub_monitor.SCALE_MAX, width=240,
+            number_of_steps=sub_monitor.SCALE_MAX - sub_monitor.SCALE_MIN,
+            command=self._on_submon_scale_change)
+        self.submon_scale_slider.pack(side="left")
+        self.submon_scale_slider.bind("<ButtonRelease-1>",
+                                      self._on_submon_scale_release)
+        # The value can also be typed in.
+        self.submon_scale_var = tkinter.StringVar()
+        self.submon_scale_entry = customtkinter.CTkEntry(
+            master=zrow, textvariable=self.submon_scale_var, width=80)
+        self.submon_scale_entry.pack(side="left", padx=(16, 0))
+        self._submon_scale_ok_color = self.submon_scale_entry.cget(
+            "fg_color")
+        zcur = sub_monitor._clamp_scale(ConfigManager()._read_app_setting(
+            "submonitor_scale", 100))
+        self.submon_scale_slider.set(zcur)
+        self.submon_scale_var.set(str(zcur))
+        self._submon_scale_trace = self.submon_scale_var.trace(
+            "w", self._on_submon_scale_entry)
+
     # ---------------------------------------------------------------- #
     # Chattering prevention
     # ---------------------------------------------------------------- #
@@ -652,6 +680,45 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         from src.gui import sub_monitor
         sub_monitor.set_live_alpha(round(float(value) / 100.0, 2))
 
+    def _on_submon_scale_change(self, value):
+        from src.gui import sub_monitor
+        v = sub_monitor._clamp_scale(value)
+        # Mirror into the entry without triggering its save.
+        self.submon_scale_var.trace_vdelete("w", self._submon_scale_trace)
+        self.submon_scale_var.set(str(v))
+        self._submon_scale_trace = self.submon_scale_var.trace(
+            "w", self._on_submon_scale_entry)
+        self.submon_scale_entry.configure(
+            fg_color=self._submon_scale_ok_color)
+        sub_monitor.set_live_scale(v)
+
+    def _on_submon_scale_entry(self, *_args):
+        from src.gui import sub_monitor
+        try:
+            v = int(self.submon_scale_var.get().strip())
+        except ValueError:
+            v = None
+        if v is None or not sub_monitor.SCALE_MIN <= v <= sub_monitor.SCALE_MAX:
+            self.submon_scale_entry.configure(fg_color="#ee9e9d")
+            return
+        self.submon_scale_entry.configure(
+            fg_color=self._submon_scale_ok_color)
+        self.submon_scale_slider.set(v)
+        sub_monitor.set_live_scale(v)
+        try:
+            ConfigManager().write_app_setting("submonitor_scale", v)
+        except Exception as e:
+            logger.error("submonitor_scale write failed: %s", e)
+
+    def _on_submon_scale_release(self, _event=None):
+        from src.gui import sub_monitor
+        try:
+            ConfigManager().write_app_setting(
+                "submonitor_scale",
+                sub_monitor._clamp_scale(self.submon_scale_slider.get()))
+        except Exception as e:
+            logger.error("submonitor_scale write failed: %s", e)
+
     def _on_submon_alpha_release(self, _event=None):
         try:
             ConfigManager().write_app_setting(
@@ -761,7 +828,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
 
     def _get_chattering_cfg(self):
         cfg = ConfigManager().config
-        enabled = bool(cfg.get("chattering_prevention_enabled", False))
+        enabled = bool(cfg.get("chattering_prevention_enabled", True))
         threshold = int(cfg.get("chattering_threshold_ms",
                                 CHATTERING_DEFAULT_MS))
         threshold = max(CHATTERING_MIN_MS, min(CHATTERING_MAX_MS, threshold))

@@ -90,8 +90,9 @@ class GazeGrid:
 
     def open(self, rows, cols, cells, on_exit, idle_timeout_s=60.0,
              alpha=0.2, confirm_ms=0, on_confirm=None,
-             ignore_blink_ms=BLINK_STABLE_DEFAULT_MS):
+             ignore_blink_ms=BLINK_STABLE_DEFAULT_MS, message=""):
         import pyautogui
+        self._message = str(message or "")
         self.rows = max(1, int(rows))
         self.cols = max(1, int(cols))
         self.cells = dict(cells or {})
@@ -234,6 +235,15 @@ class GazeGrid:
                 self._cell_items[key] = {
                     "rect": rect, "fill": fill, "title": title_id,
                     "icon": icon_id}
+        if getattr(self, "_message", ""):
+            # Setup message (see gaze_tool_setup), over the centre.
+            self.back_canvas.create_rectangle(
+                W * 0.2, H * 0.36, W * 0.8, H * 0.64, fill="#202124",
+                outline="", width=0)
+            self.canvas.create_text(
+                W / 2, H / 2, text=self._message, fill=TITLE_FG,
+                font=("Segoe UI", int(max(16, H * 0.028)), "bold"),
+                width=int(W * 0.56), justify="center")
 
     # ---------------------------------------------------------------- #
 

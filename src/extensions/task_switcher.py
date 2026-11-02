@@ -31,6 +31,24 @@ def _cfg():
         "task_switcher", {}) or {}
 
 
+# Always hidden, and not offered in the hide-rule picker either: shell
+# surfaces that enumerate as ordinary visible, titled windows.
+# Jump lists are titled "%1 のジャンプ リスト" on Japanese Windows (with
+# the space; Windows.UI.ShellCommon resources) and "Jump List for %1" on
+# English Windows.
+BUILTIN_HIDDEN = (
+    [{"proc": p, "title": "", "by_proc": True, "by_title": False}
+     for p in ("ShellExperienceHost.exe", "TextInputHost.exe",
+               "SearchHost.exe", "StartMenuExperienceHost.exe")]
+    + [{"proc": "", "title": s, "by_proc": False, "by_title": True}
+       for s in ("PopupHost", "*ジャンプリスト", "*ジャンプ リスト",
+                 "Jump List for *", "Jump list for *")])
+
+
+def builtin_hidden(proc_name, title):
+    return any(rule_matches(r, proc_name, title) for r in BUILTIN_HIDDEN)
+
+
 def hidden_rules():
     """The user's "hide task" rules, as stored under task_switcher.hidden.
 
@@ -123,6 +141,9 @@ class TaskSwitcher:
         from src.gui.gaze_grid_factory import make_gaze_grid
         self.grid = make_gaze_grid(mc._tk_root)
         cells = self._page_cells()
+        from src.extensions.gaze_tool_setup import setup_message
+        confirm_ms = int(_cfg().get("confirm_ms", 0) or 0)
+        message = setup_message(self.gesture_map(), confirm_ms)
         try:
             mc._tk_root.after(
                 0, lambda: self.grid.open(
@@ -130,10 +151,11 @@ class TaskSwitcher:
                     on_exit=self.close,
                     idle_timeout_s=60.0,
                     alpha=self._alpha,
-                    confirm_ms=int(_cfg().get("confirm_ms", 0) or 0),
+                    confirm_ms=confirm_ms,
                     on_confirm=lambda: self.on_action("confirm"),
                     ignore_blink_ms=int(
-                        _cfg().get("ignore_blink_ms", 0) or 0)))
+                        _cfg().get("ignore_blink_ms", 0) or 0),
+                    message=message))
         except Exception as e:
             logger.error("task switcher open failed: %s", e)
             self.close()
@@ -153,7 +175,7 @@ class TaskSwitcher:
         import win32gui
         import win32con
         out = []
-        rules = hidden_rules()
+        rules = BUILTIN_HIDDEN + hidden_rules()
 
         # GazeFace's own window is listed like any other. It used to be
         # filtered out by pid, which meant the one window a user driving
@@ -213,7 +235,10 @@ class TaskSwitcher:
                 pass
             # Our own window is offered here too — it is switchable now,
             # so it must also be hideable.
-            out.append((cls.window_proc_name(hwnd), title))
+            proc = cls.window_proc_name(hwnd)
+            if builtin_hidden(proc, title):
+                return          # hidden anyway: nothing to choose
+            out.append((proc, title))
 
         try:
             win32gui.EnumWindows(cb, None)

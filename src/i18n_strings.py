@@ -283,6 +283,7 @@ JA = {
     # ---- Sub-monitor opacity (Advanced) ----
     "Opacity of the floating gesture sub-monitor window (toggle it on from the bottom-left of any page).":
         "フローティングのジェスチャサブモニターの透過率（各ページ左下のスイッチで表示）。",
+    "Size (%)": "拡大率 (%)",
     "Opacity (%)": "透過率 (%)",
 
     # ---- Multiple instances (Advanced) ----
@@ -664,6 +665,12 @@ JA = {
     "When an error occurs in the app, it tries to restart itself automatically so you are not left unable to operate it. If the settings are broken, it restarts with an earlier backup profile. Normally there is no need to change this setting.":
         "アプリにエラーが発生した時に、操作不能とならないように自動で再起動を試みます。設定が壊れていた場合、過去のバックアッププロファイルで再起動します。通常は設定を変える必要はありません。",
     "Disabled time (s)": "無効時間（秒）",
+    "The exit gesture is not set. Assign a facial expression in the feature options. This screen closes automatically in 60 seconds.":
+        "終了ジェスチャーが未設定です。機能オプションで表情割り当てを設定して下さい。この画面は60秒後に自動終了します。",
+    "The confirm gesture is not set. Assign a facial expression in the feature options. This screen closes automatically in 60 seconds.":
+        "決定ジェスチャーが未設定です。機能オプションで表情割り当てを設定して下さい。この画面は60秒後に自動終了します。",
+    "No items are registered. Register items in the feature options. This screen closes automatically in 60 seconds.":
+        "アイテムが未登録です。機能オプションでアイテムを登録して下さい。この画面は60秒後に自動終了します。",
 }
 
 TRANSLATIONS = {
