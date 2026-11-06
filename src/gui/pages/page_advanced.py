@@ -25,9 +25,6 @@ from src.i18n import t
 
 logger = logging.getLogger("PageAdvanced")
 
-CHATTERING_MIN_MS = 10
-CHATTERING_MAX_MS = 2000
-CHATTERING_DEFAULT_MS = 1000
 
 JUMP_DELAY_MIN_MS = 100
 JUMP_DELAY_MAX_MS = 5000
@@ -75,7 +72,8 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         # are gone, because a settings page that offers a knob for
         # something the user never needs to turn is not neutral: it is a
         # question they have to read and dismiss on every visit.
-        self._build_chattering_section()
+        # Chattering prevention moved to each gesture's options
+        # (gesture_options_popup), where it is set per gesture.
         # Gesture List section was removed — all gestures are now
         # always selectable from the binding-page gesture popup.
         self._build_gain_section()
@@ -202,53 +200,6 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         self._submon_scale_trace = self.submon_scale_var.trace(
             "w", self._on_submon_scale_entry)
 
-    # ---------------------------------------------------------------- #
-    # Chattering prevention
-    # ---------------------------------------------------------------- #
-
-    def _build_chattering_section(self):
-        self._section(t("Chattering prevention"), "Chattering prevention")
-
-        self.enabled_var = tkinter.BooleanVar()
-        self.enabled_checkbox = self._grid(customtkinter.CTkCheckBox(
-            master=self,
-            text=t("Enable chattering prevention"),
-            variable=self.enabled_var,
-            onvalue=True,
-            offvalue=False,
-            command=self.on_enabled_toggle))
-
-        self._subheader(t("Interval (ms)"))
-
-        # Slider and entry share one packed row. They used to be two
-        # widgets in the same grid cell, the entry pushed clear of the
-        # 300px slider with padx=(350, 5) — a number that silently goes
-        # wrong the moment the slider width or the font changes.
-        crow = self._row_frame(padx=30)
-        self.slider_dragging = False
-        self.threshold_slider = customtkinter.CTkSlider(
-            master=crow,
-            from_=CHATTERING_MIN_MS,
-            to=CHATTERING_MAX_MS,
-            width=300,
-            number_of_steps=CHATTERING_MAX_MS - CHATTERING_MIN_MS,
-            command=self.on_slider_drag)
-        self.threshold_slider.bind("<Button-1>", self.on_slider_press)
-        self.threshold_slider.bind("<ButtonRelease-1>",
-                                   self.on_slider_release)
-        self.threshold_slider.pack(side="left", padx=(0, 16))
-
-        self.entry_var = tkinter.StringVar()
-        self.entry_trace_id = self.entry_var.trace("w",
-                                                   self.on_entry_changed)
-        self.threshold_entry = customtkinter.CTkEntry(
-            master=crow,
-            textvariable=self.entry_var,
-            width=80)
-        self.threshold_entry.pack(side="left")
-        self._entry_ok_color = self.threshold_entry.cget("fg_color")
-
-
     # Gesture List section was removed — every gesture is always
     # available from the per-row gesture-selection popup on the
     # binding pages, with its own live meter, so this Advanced
@@ -284,6 +235,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             textvariable=self.gain_entry_var,
             width=80)
         self.gain_entry.pack(side="left")
+        self._entry_ok_color = self.gain_entry.cget("fg_color")
 
     # Live blendshape debug panel was removed from this page — the
     # per-gesture meter + sensitivity controls live in the Gesture
@@ -826,24 +778,7 @@ class PageAdvanced(SafeDisposableScrollableFrame):
     # Initial state & helpers
     # ---------------------------------------------------------------- #
 
-    def _get_chattering_cfg(self):
-        cfg = ConfigManager().config
-        enabled = bool(cfg.get("chattering_prevention_enabled", True))
-        threshold = int(cfg.get("chattering_threshold_ms",
-                                CHATTERING_DEFAULT_MS))
-        threshold = max(CHATTERING_MIN_MS, min(CHATTERING_MAX_MS, threshold))
-        return enabled, threshold
-
     def load_initial_config(self):
-        enabled, threshold = self._get_chattering_cfg()
-        self.enabled_var.set(enabled)
-        self.threshold_slider.set(threshold)
-        self.entry_var.trace_vdelete("w", self.entry_trace_id)
-        self.entry_var.set(str(threshold))
-        self.entry_trace_id = self.entry_var.trace("w",
-                                                   self.on_entry_changed)
-        self._sync_enabled_visual(enabled)
-
         mode = ConfigManager().config.get("tracking_mode", "head")
         if mode not in ("head", "gaze"):
             mode = "head"
@@ -877,56 +812,9 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         # section is no longer built, so its variable does not exist. The
         # value is still read straight from config wherever it is used.
 
-    def _sync_enabled_visual(self, enabled: bool):
-        state = "normal" if enabled else "disabled"
-        try:
-            self.threshold_slider.configure(state=state)
-            self.threshold_entry.configure(state=state)
-        except Exception:
-            pass
-
     # ---------------------------------------------------------------- #
     # Callbacks
     # ---------------------------------------------------------------- #
-
-    def on_enabled_toggle(self):
-        enabled = bool(self.enabled_var.get())
-        ConfigManager().set_temp_config("chattering_prevention_enabled",
-                                        enabled)
-        ConfigManager().apply_config()
-        self._sync_enabled_visual(enabled)
-
-    def on_slider_press(self, _event):
-        self.slider_dragging = True
-
-    def on_slider_drag(self, new_value):
-        self.slider_dragging = True
-        new_value = int(new_value)
-        self.entry_var.trace_vdelete("w", self.entry_trace_id)
-        self.entry_var.set(str(new_value))
-        self.entry_trace_id = self.entry_var.trace("w",
-                                                   self.on_entry_changed)
-
-    def on_slider_release(self, _event):
-        self.slider_dragging = False
-        new_value = int(self.threshold_slider.get())
-        ConfigManager().set_temp_config("chattering_threshold_ms", new_value)
-        ConfigManager().apply_config()
-
-    def on_entry_changed(self, *_args):
-        text = self.entry_var.get()
-        if not text.isdigit():
-            self.threshold_entry.configure(fg_color="#ee9e9d")
-            return
-        value = int(text)
-        if value < CHATTERING_MIN_MS or value > CHATTERING_MAX_MS:
-            self.threshold_entry.configure(fg_color="#ee9e9d")
-            return
-        self.threshold_entry.configure(fg_color=self._entry_ok_color)
-        self.threshold_slider.set(value)
-        if not self.slider_dragging:
-            ConfigManager().set_temp_config("chattering_threshold_ms", value)
-            ConfigManager().apply_config()
 
     def on_tracking_mode_change(self):
         mode = self.tracking_mode_var.get()

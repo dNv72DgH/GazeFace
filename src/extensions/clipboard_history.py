@@ -27,6 +27,8 @@ import time
 
 import pydirectinput
 
+import src.key_input  # noqa: F401  extended-key flag for PgDn etc.
+
 from src.config_manager import ConfigManager
 from src.extensions import clip_store
 from src.i18n import t

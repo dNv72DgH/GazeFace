@@ -35,6 +35,8 @@ import time
 
 import pydirectinput
 
+import src.key_input  # noqa: F401  extended-key flag for PgDn etc.
+
 from src import mouse_input
 from src.config_manager import ConfigManager
 from src.extensions.launcher_icons import icon_for_item as _icon_for_item

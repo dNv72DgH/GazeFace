@@ -82,6 +82,13 @@ STRONG_SECS_MIN = 1
 STRONG_SECS_MAX = 120
 STRONG_SECS_DEFAULT = 2
 
+# Chattering prevention interval (ms), per gesture. A gesture with no
+# value of its own is on at the default. Keep in step with
+# keybinder.CHATTERING_DEFAULT_MS.
+CHATTERING_MIN_MS = 10
+CHATTERING_MAX_MS = 5000
+CHATTERING_DEFAULT_MS = 1000
+
 # Per-gesture threshold-slider upper limit (in the binding page's slider
 # units; /LIMIT_FACTOR = the real threshold ceiling). Lowering it keeps
 # the threshold slider's width but shrinks its range, so small thresholds
@@ -141,6 +148,7 @@ class GestureOptionsPopup:
         # Hold time is now exposed for every gesture (not just
         # close-eye). Default 0 = no hold.
         self._build_hold_section()
+        self._build_chattering_section()
         self._build_limit_section()
         self._build_floor_section()
         self._col = right
@@ -780,6 +788,26 @@ class GestureOptionsPopup:
     # ---------------------------------------------------------------- #
     # Disable on strong reaction
     # ---------------------------------------------------------------- #
+
+    def _build_chattering_section(self):
+        """Chattering prevention for this gesture: after any input, its
+        own clicks / key presses are ignored for the interval. Default:
+        on, CHATTERING_DEFAULT_MS (see Keybinder._chattering_cfg)."""
+        cfg = ConfigManager().config
+        enabled = (cfg.get("gesture_chattering_enabled", {}) or {}).get(
+            self.gesture, True)
+        self.chatter_enabled_var = tk.BooleanVar(value=bool(enabled))
+        section_with_help(self._col, t("Chattering prevention"),
+                          "Chattering prevention",
+                          pady=(16, 8), variable=self.chatter_enabled_var,
+                          command=lambda: self._save_strong(
+                              "gesture_chattering_enabled",
+                              bool(self.chatter_enabled_var.get())))
+        self._int_slider_row(
+            t("Interval (ms)"), CHATTERING_MIN_MS, CHATTERING_MAX_MS,
+            self._strong_value("gesture_chattering_ms", CHATTERING_DEFAULT_MS,
+                               CHATTERING_MIN_MS, CHATTERING_MAX_MS),
+            "gesture_chattering_ms", top_pad=0)
 
     def _build_strong_off_section(self):
         self.strong_enabled_var = tk.BooleanVar(

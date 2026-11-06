@@ -660,8 +660,8 @@ JA = {
     "The update failed.": "更新に失敗しました。",
     "What's new in GazeFace %s": "GazeFace %s の更新内容",
     "GazeFace has been updated to %s.": "GazeFace を %s に更新しました。",
-    "Suppresses chattering, where a click or other input is entered several times in a row without you meaning it. Recommended on.":
-        "クリックなどの入力が意図せず連続して入力されてしまうチャタリングを抑制します。オン推奨。",
+    "Suppresses chattering, where a click or other input is entered several times in a row without you meaning it. While on, this gesture's clicks and key presses are ignored for the interval after any input. Recommended on.":
+        "クリックなどの入力が意図せず連続して入力されてしまうチャタリングを抑制します。オンの間、何かの入力があってから間隔の時間内は、この表情のクリックやキー入力を無視します。オン推奨。",
     "When an error occurs in the app, it tries to restart itself automatically so you are not left unable to operate it. If the settings are broken, it restarts with an earlier backup profile. Normally there is no need to change this setting.":
         "アプリにエラーが発生した時に、操作不能とならないように自動で再起動を試みます。設定が壊れていた場合、過去のバックアッププロファイルで再起動します。通常は設定を変える必要はありません。",
     "Disabled time (s)": "無効時間（秒）",

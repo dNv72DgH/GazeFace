@@ -513,6 +513,15 @@ class Overlay:
                 sig.connect(lambda *_a: self._on_topology())
             except Exception:
                 pass
+        # A resolution or scaling change on a screen that stays connected
+        # is a layout change too: without the restart the gaze-move
+        # shadows came out shifted from their arrows afterwards.
+        for scr in self.app.screens():
+            self._watch_screen(scr)
+        try:
+            self.app.screenAdded.connect(self._watch_screen)
+        except Exception:
+            pass
 
         # Cursor-ring follower (gaze-move glide). Reads the OS cursor and
         # feeds the ring position to QML (logical px).
@@ -1167,6 +1176,14 @@ class Overlay:
         except Exception:
             pass
         os._exit(RENDER_RESTART_EXIT)     # only if the above failed
+
+    def _watch_screen(self, scr):
+        for sig in ("geometryChanged", "logicalDotsPerInchChanged",
+                    "physicalDotsPerInchChanged"):
+            try:
+                getattr(scr, sig).connect(lambda *_a: self._on_topology())
+            except Exception:
+                pass
 
     def _on_topology(self):
         """A screen was added / removed or the primary changed.

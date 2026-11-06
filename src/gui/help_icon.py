@@ -106,7 +106,9 @@ HELP_TEXTS = {
     "Chattering prevention": (
         "Chattering prevention",
         "Suppresses chattering, where a click or other input is entered "
-        "several times in a row without you meaning it. Recommended on."),
+        "several times in a row without you meaning it. While on, this "
+        "gesture's clicks and key presses are ignored for the interval "
+        "after any input. Recommended on."),
     "Auto recovery": (
         "Auto recovery",
         "When an error occurs in the app, it tries to restart itself "

@@ -18,6 +18,8 @@ import math
 import threading
 import time
 import pydirectinput
+
+import src.key_input  # noqa: F401  extended-key flag for PgDn etc.
 import win32api
 
 from src import mouse_input
@@ -49,6 +51,16 @@ pydirectinput.FAILSAFE = False
 # noisily oscillates around its threshold from rapid-toggling global
 # state (the classic "face control keeps flipping off" symptom).
 CONTROL_DEBOUNCE_S = 0.7
+
+# Mouse-page actions that fire once per rising edge through
+# _control_debounced rather than mouse_action(). Chattering prevention
+# applies to them too (see act()).
+CONTROL_ACTIONS = ("pause", "pointer_jump", "gaze_move", "gaze_launcher",
+                   "gaze_clipboard", "gaze_taskswitch", "reset", "cycle")
+
+# Chattering prevention interval (ms) for a gesture with none set in
+# gesture_chattering_ms. Keep in step with gesture_options_popup.
+CHATTERING_DEFAULT_MS = 1000
 
 # After a gaze app (launcher / clipboard / task switcher) closes, suspend
 # the normal mouse/keyboard bindings for this long. The confirm gesture
@@ -148,6 +160,9 @@ class Keybinder(metaclass=Singleton):
         # or which gesture tries to fire next. Pointer movement is handled
         # by MouseController and is not affected.
         self.last_input_ts = None
+        # The gesture whose binding is being dispatched; its own
+        # chattering settings apply (see _is_chattering).
+        self._cur_shape = None
         # Pointer-jump state: timer that will revert tracking_mode to
         # head after the gaze window expires, plus a flag to avoid
         # stacking error dialogs.
@@ -405,6 +420,8 @@ class Keybinder(metaclass=Singleton):
         if last is not None and (now - last) < CONTROL_DEBOUNCE_S:
             return True
         self._control_last_ts[state_name] = now
+        # It fires: an input for chattering prevention, like a click.
+        self._record_input()
         return False
 
     def _has_gaze_calibration(self) -> bool:
@@ -550,6 +567,7 @@ class Keybinder(metaclass=Singleton):
             la = gmap.get(shape)
             if not la:
                 continue
+            self._cur_shape = shape
             above = info["val"] > info["thres"]
             if above and not self._launcher_states.get(shape, False):
                 # Hold-time guard: require sustained-above-threshold for
@@ -562,8 +580,13 @@ class Keybinder(metaclass=Singleton):
                         continue
                     if (time.time() - started) * 1000 < hold_ms:
                         continue
+                # Chattering prevention, as for a normal binding: inside
+                # the lockout the edge waits (state untouched).
+                if self._is_chattering():
+                    continue
                 self._launcher_states[shape] = True
                 self._lh_start[shape] = None
+                self._record_input()
                 try:
                     app.on_action(la)
                 except Exception as e:
@@ -600,22 +623,40 @@ class Keybinder(metaclass=Singleton):
         except Exception as e:
             logger.error("notice failed: %s", e)
 
-    def _is_chattering(self) -> bool:
-        """Global chattering lockout check.
+    def _chattering_cfg(self, shape):
+        """(enabled, interval ms) of `shape`'s chattering prevention.
 
-        Returns True if any input action fired within the past
-        `chattering_threshold_ms`. While True, all clicks and key
-        presses are blocked — regardless of which gesture they belong
-        to. The lockout window is NOT extended or reset by additional
-        gestures that arrive during the lockout (they're just dropped),
-        and pointer movement does not touch it.
-        """
+        Set per gesture in its options (gesture_chattering_enabled /
+        gesture_chattering_ms). A gesture with no value of its own is ON
+        at CHATTERING_DEFAULT_MS. (The old profile-wide
+        chattering_prevention_enabled / chattering_threshold_ms are no
+        longer read.)"""
         cfg = ConfigManager().config
-        if not cfg.get("chattering_prevention_enabled", True):
-            return False
+        en = (cfg.get("gesture_chattering_enabled", {}) or {}).get(
+            shape, True)
+        ms = (cfg.get("gesture_chattering_ms", {}) or {}).get(
+            shape, CHATTERING_DEFAULT_MS)
+        try:
+            ms = float(ms)
+        except (TypeError, ValueError):
+            ms = float(CHATTERING_DEFAULT_MS)
+        return bool(en), ms
+
+    def _is_chattering(self) -> bool:
+        """Chattering lockout check for the gesture being dispatched.
+
+        Returns True if any input action (from ANY gesture) fired within
+        the dispatched gesture's interval, and that gesture has the
+        prevention on. While True its clicks and key presses are dropped.
+        The lockout window is NOT extended or reset by gestures that
+        arrive during it (they're just dropped), and pointer movement
+        does not touch it.
+        """
         if self.last_input_ts is None:
             return False
-        threshold_ms = cfg.get("chattering_threshold_ms", 1000)
+        enabled, threshold_ms = self._chattering_cfg(self._cur_shape)
+        if not enabled:
+            return False
         return (time.time() - self.last_input_ts) * 1000 < threshold_ms
 
     def _record_input(self) -> None:
@@ -1178,6 +1219,7 @@ class Keybinder(metaclass=Singleton):
             if shape_name not in shape_list.blendshape_names:
                 continue
             device, action, thres, mode = v
+            self._cur_shape = shape_name
             # Self-heal: a binding applied between the staleness check
             # at the top of act() and here can reference a state that
             # init_states hasn't created yet — without this a KeyError
@@ -1237,6 +1279,18 @@ class Keybinder(metaclass=Singleton):
                 if action in ("gaze_move", "pointer_jump"):
                     self.key_states[gm_state] = True
                     continue
+
+            # Chattering prevention for the control actions (launcher,
+            # pause, gaze jump / move, ...): they never reach
+            # mouse_action(), where clicks and keys are checked. Same rule
+            # as there: a rising edge inside the lockout is skipped with
+            # its state left untouched, so a gesture still held when the
+            # lockout ends fires then.
+            if (device == "mouse" and action in CONTROL_ACTIONS
+                    and val > thres
+                    and self.key_states.get(gm_state) is False
+                    and self._is_chattering()):
+                continue
 
             if (device == "mouse") and (action == "pause"):
                 state_name = "mouse_" + action
