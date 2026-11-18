@@ -95,6 +95,9 @@ CHATTERING_DEFAULT_MS = 1000
 # are easier to dial in; the volume/sub-monitor meters rescale to match.
 LIMIT_MIN = 0
 LIMIT_MAX = 5000
+# The upper limit cannot go below this: under it the binding page's
+# threshold slider has no travel left (page_select_gestures.CEILING_MIN).
+LIMIT_UPPER_MIN = 11
 LIMIT_DEFAULT = 5000
 LIMIT_FACTOR = 1000.0
 # Lower limit (same units): 0 = none. Must stay FLOOR_MIN_SPAN under the
@@ -926,7 +929,7 @@ class GestureOptionsPopup:
             v = int(v)
         except Exception:
             v = LIMIT_DEFAULT
-        return max(LIMIT_MIN, min(LIMIT_MAX, v))
+        return max(LIMIT_UPPER_MIN, min(LIMIT_MAX, v))
 
     def _build_limit_section(self):
         section_with_help(self._col, t("Slider upper limit"), "Slider upper limit")
@@ -961,7 +964,7 @@ class GestureOptionsPopup:
             "w", self._on_limit_entry_changed)
 
     def _save_limit(self, units):
-        units = max(LIMIT_MIN, min(LIMIT_MAX, int(units)))
+        units = max(LIMIT_UPPER_MIN, min(LIMIT_MAX, int(units)))
         limits = self._limit_map()
         limits[self.gesture] = units
         ConfigManager().set_temp_config("gesture_slider_max", limits)
@@ -974,7 +977,7 @@ class GestureOptionsPopup:
 
     def _on_limit_drag(self, value):
         self._limit_dragging = True
-        pos = int(value)
+        pos = max(LIMIT_UPPER_MIN, int(value))
         try:
             self.limit_var.trace_vdelete("w", self._limit_trace_id)
         except Exception:
@@ -993,7 +996,7 @@ class GestureOptionsPopup:
             self.limit_entry.configure(fg_color="#ee9e9d")
             return
         v = int(text)
-        if not (LIMIT_MIN <= v <= LIMIT_MAX):
+        if not (LIMIT_UPPER_MIN <= v <= LIMIT_MAX):
             self.limit_entry.configure(fg_color="#ee9e9d")
             return
         self.limit_entry.configure(fg_color="white")

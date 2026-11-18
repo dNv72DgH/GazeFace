@@ -187,8 +187,17 @@ class ExtGridOptionsPopup:
                 command=self._save_pincell).pack(padx=20, pady=(0, 4),
                                                  anchor="w")
 
-        # Task switcher only: rules for windows to leave out of the grid.
+        # Task switcher only: move the pointer onto the window it switched
+        # to (its centre), and rules for windows to leave out of the grid.
         if self.cfg_key == "task_switcher":
+            from src.extensions.task_switcher import POINTER_TO_WINDOW_KEY
+            self.ptr_win_var = tk.BooleanVar(
+                value=bool(cfg.get(POINTER_TO_WINDOW_KEY, False)))
+            customtkinter.CTkCheckBox(
+                left, text=t("Move the pointer to the switched window"),
+                variable=self.ptr_win_var, onvalue=True, offvalue=False,
+                command=self._save_ptr_win).pack(padx=20, pady=(6, 4),
+                                                 anchor="w")
             customtkinter.CTkButton(
                 left, text=t("Hide tasks"), width=180,
                 command=self._open_hidden_tasks).pack(
@@ -274,6 +283,13 @@ class ExtGridOptionsPopup:
         e = self._data()
         e.setdefault(self.cfg_key, {})["page_btns"] = bool(
             self.pgbtn_var.get())
+        ConfigManager().write_extensions(e)
+
+    def _save_ptr_win(self):
+        from src.extensions.task_switcher import POINTER_TO_WINDOW_KEY
+        e = self._data()
+        e.setdefault(self.cfg_key, {})[POINTER_TO_WINDOW_KEY] = bool(
+            self.ptr_win_var.get())
         ConfigManager().write_extensions(e)
 
     def _save_pincell(self):

@@ -648,14 +648,20 @@ class ThreadCameras():
             """
             nonlocal last_recover_ts, failed_recovers, reopen_fails
             now = time.time()
-            # Show "recovering" the instant a recovery is triggered, not
-            # only once one has failed — otherwise a camera going bad via
-            # the No-frame / timeout / stale paths shows nothing until the
-            # fps window catches up. Cleared on the next healthy read /
-            # successful reopen below.
-            app_status.set_error("Camera error", "Recovering")
             if now - last_recover_ts < RECOVER_COOLDOWN_S:
-                return  # too soon — let the device settle
+                # Too soon — let the device settle. The status is NOT
+                # touched here: nothing below runs, so an error raised
+                # now would have nothing to clear it. A trigger right
+                # after a successful reopen used to leave "Camera error /
+                # Recovering" on screen with the camera working. If the
+                # last reopen failed, its error is still showing anyway.
+                return
+            # Show "recovering" the instant a recovery starts, not only
+            # once one has failed — otherwise a camera going bad via the
+            # No-frame / timeout / stale paths shows nothing until the
+            # fps window catches up. Cleared by the successful reopen
+            # below.
+            app_status.set_error("Camera error", "Recovering")
             failed_recovers += 1
             if failed_recovers >= RECOVERS_BEFORE_RESCAN:
                 ok = bool(self.rescan_and_pick())

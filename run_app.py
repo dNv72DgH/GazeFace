@@ -48,6 +48,7 @@ if _dg.on_secure_desktop():
     raise SystemExit(_lite_main())
 
 import ctypes
+import ctypes.wintypes
 import json
 import logging
 import logging.handlers
@@ -205,6 +206,8 @@ class MainApp(gui.MainGui, Pipeline):
         self._last_overlay_recycle = time.time()
         self._last_recycle_tick = time.time()
         self._idle_was_long = False
+        self._cursor_seen = None             # pointer position, last tick
+        self._cursor_moved_ts = time.time()  # when it last differed
         self._resume_pending = None
         self.tk_root.after(60000, self._overlay_recycle_tick)
 
@@ -269,6 +272,22 @@ class MainApp(gui.MainGui, Pipeline):
         idle = _user_idle_s()
         if idle is None:
             return None
+        # Head tracking moves the pointer with SetCursorPos, which does
+        # NOT count as input for GetLastInputInfo: someone reading or
+        # watching a video, steering only the pointer, looked "away" for
+        # as long as they did not click, and their next click recycled
+        # the overlay under them. A pointer that moved since the last
+        # tick is a user who is here.
+        try:
+            pt = ctypes.wintypes.POINT()
+            pos = ((pt.x, pt.y) if ctypes.windll.user32.GetCursorPos(
+                ctypes.byref(pt)) else None)
+        except Exception:
+            pos = None
+        if pos is not None and pos != self._cursor_seen:
+            self._cursor_seen = pos
+            self._cursor_moved_ts = now
+        idle = min(idle, now - self._cursor_moved_ts)
         if idle >= IDLE_LONG_S:
             self._idle_was_long = True       # away — remember it
             return None

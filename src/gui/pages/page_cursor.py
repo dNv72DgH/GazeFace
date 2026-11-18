@@ -58,10 +58,11 @@ class FrameSelectGesture(SafeDisposableFrame):
         # Slider divs. The dict key (English source) is what gets
         # translated on display, so keys must stay as the canonical strings.
         self.divs = self.create_divs({
-            "Move up": ["spd_up", "", 1, MAX_SPEED],
-            "Move down": ["spd_down", "", 1, MAX_SPEED],
-            "Move right": ["spd_right", "", 1, MAX_SPEED],
-            "Move left": ["spd_left", "", 1, MAX_SPEED],
+            # 0 = the pointer does not move in that direction.
+            "Move up": ["spd_up", "", 0, MAX_SPEED],
+            "Move down": ["spd_down", "", 0, MAX_SPEED],
+            "Move right": ["spd_right", "", 0, MAX_SPEED],
+            "Move left": ["spd_left", "", 0, MAX_SPEED],
             # An empty balloon text means no "?" marker on the row.
             "Smooth pointer": ["pointer_smooth", "", 1, 100],
             "Hold trigger delay(ms)": ["hold_trigger_ms", "", 1,
@@ -81,8 +82,8 @@ class FrameSelectGesture(SafeDisposableFrame):
 
             cfg_value = int(
                 np.clip(ConfigManager().config[cfg_name],
-                        a_min=1,
-                        a_max=MAX_HOLD_TRIG))
+                        a_min=div["min"],
+                        a_max=div["max"]))
             div["slider"].set(cfg_value)
             # Temporary remove trace, adjust the value and put it back
             div["entry_var"].trace_vdelete("w", div["entry_trace_id"])
@@ -164,7 +165,9 @@ class FrameSelectGesture(SafeDisposableFrame):
                 "entry": entry,
                 "entry_var": entry_var,
                 "entry_trace_id": entry_var_trace_id,
-                "entry_trace_fn": entry_trace_fn
+                "entry_trace_fn": entry_trace_fn,
+                "min": slider_min,
+                "max": slider_max,
             }
         return out_dict
 

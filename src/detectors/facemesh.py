@@ -31,6 +31,14 @@ logger = logging.getLogger("FaceMesh")
 # many seconds, doubling up to the maximum while it stays that way.
 NO_FACE_FIRST_RECOVER_S = 8.0
 NO_FACE_MAX_RECOVER_S = 60.0
+# After this many rebuilds in a row without a face, the user is most
+# likely just away: drop to one rebuild per NO_FACE_AWAY_RECOVER_S. Each
+# rebuild stalls the UI thread for a few hundred ms, and once a minute
+# all night was hundreds of them for nobody. Not stopped outright - a
+# detector that is really stuck must still come back on its own, for a
+# user who cannot reach the PC to restart the app.
+NO_FACE_FAST_TRIES = 8
+NO_FACE_AWAY_RECOVER_S = 600.0
 # Confidence the detector needs to FIND a face (MediaPipe's default 0.5).
 # Once found, the face is tracked, which copes with poses the first find
 # misses: seen after a Windows update, a still user resting in a usual
@@ -64,14 +72,10 @@ R_IRIS_CENTER = 468
 L_IRIS_CENTER = 473
 
 
-def gaze_ratio(landmarks, w, h):
-    """Return (rx, ry) — mean of left+right per-eye iris offsets,
-    normalised by eye width. Output range is roughly [0, 1] for rx
-    (0=looking right, 1=looking left after image flip) and a small
-    signed value for ry (0 = level gaze).
-
-    Ported verbatim from gaze-mouse so calibration semantics match.
-    """
+def eye_ratios(landmarks, w, h):
+    """Per-eye (rx, ry, width_px) for the two eyes - the values
+    gaze_ratio averages, kept apart for the calibration's diagnostics
+    log. Each eye's iris offset is normalised by that eye's width."""
     def pt(i):
         lm = landmarks[i]
         return (lm.x * w, lm.y * h)
@@ -86,10 +90,21 @@ def gaze_ratio(landmarks, w, h):
         rx = (iris[0] - x_lo) / width
         # NB: normalise vertical by eye WIDTH, not height.
         ry = (iris[1] - mid_y) / width
-        return rx, ry
+        return rx, ry, width
 
-    rx1, ry1 = eye_ratio(R_EYE_CORNERS, R_IRIS_CENTER)
-    rx2, ry2 = eye_ratio(L_EYE_CORNERS, L_IRIS_CENTER)
+    return (eye_ratio(R_EYE_CORNERS, R_IRIS_CENTER),
+            eye_ratio(L_EYE_CORNERS, L_IRIS_CENTER))
+
+
+def gaze_ratio(landmarks, w, h):
+    """Return (rx, ry) — mean of left+right per-eye iris offsets,
+    normalised by eye width. rx is roughly [0, 1] and grows as the iris
+    moves to the right of the (mirrored) image, i.e. as the user looks to
+    the right; ry is a small signed value, positive looking down.
+
+    Ported from gaze-mouse so calibration semantics match.
+    """
+    (rx1, ry1, _w1), (rx2, ry2, _w2) = eye_ratios(landmarks, w, h)
     return (rx1 + rx2) / 2, (ry1 + ry2) / 2
 
 
@@ -148,6 +163,7 @@ class FaceMesh(metaclass=Singleton):
         # and the current back-off.
         self._next_recover_mono = 0.0
         self._recover_gap_s = NO_FACE_FIRST_RECOVER_S
+        self._recover_tries = 0
         logger.info("Intialize FaceMesh singleton")
         self.mp_landmarks = None
         self.track_loc = None
@@ -302,6 +318,20 @@ class FaceMesh(metaclass=Singleton):
         except Exception:
             return None
 
+    def get_eye_ratios(self):
+        """Per-eye ((rx, ry, width_px), (rx, ry, width_px)) for the latest
+        frame, or None - see eye_ratios()."""
+        landmarks = self.mp_landmarks
+        if landmarks is None or len(landmarks) <= max(R_IRIS_CENTER,
+                                                      L_IRIS_CENTER):
+            return None
+        try:
+            return eye_ratios(landmarks,
+                              ConfigManager().config["fix_width"],
+                              ConfigManager().config["fix_height"])
+        except Exception:
+            return None
+
     def get_head_pose(self):
         """Return (head_x, head_y) — x/y components of the head-forward
         unit vector in the camera frame. Both lie in roughly [-0.5, 0.5]
@@ -343,6 +373,7 @@ class FaceMesh(metaclass=Singleton):
                 self.last_face_mono = now
                 self._recover_gap_s = NO_FACE_FIRST_RECOVER_S
                 self._next_recover_mono = 0.0
+                self._recover_tries = 0
                 self._detect_step = 0
         except Exception:
             pass
@@ -436,19 +467,38 @@ class FaceMesh(metaclass=Singleton):
         the model - with the user sitting in front of the camera, and
         nothing on screen moving. Someone who is really away costs a
         rebuild now and then (a few hundred ms), so the gaps grow:
-        8 s, 16 s, 32 s, then once a minute. Pipeline thread only."""
+        8 s, 16 s, 32 s, then once a minute, and after
+        NO_FACE_FAST_TRIES of them once every ten minutes. It keeps
+        running while Face control is off: the gesture that turns it
+        back on needs the detector too. Pipeline thread only."""
         if not self.last_result_mono:
             return                  # still starting: nothing to judge yet
         now = time.monotonic()
         since = now - max(self.last_face_mono, self.started_mono)
         if since < NO_FACE_FIRST_RECOVER_S or now < self._next_recover_mono:
             return
+        # No camera picture at all (none connected, or between cameras):
+        # the detector is being fed the placeholder image, so "no face"
+        # says nothing about the detector.
+        try:
+            from src.camera_manager import CameraManager
+            if CameraManager().showing_placeholder():
+                # Give a returning camera the usual grace period before
+                # its first frames are judged.
+                self._next_recover_mono = now + NO_FACE_FIRST_RECOVER_S
+                return
+        except Exception:
+            pass
+        self._recover_tries += 1
         logger.warning("No face for %.0f s although frames are processed "
-                       "- rebuilding the detector (%s)", since,
-                       self._frame_stats())
+                       "- rebuilding the detector (try %d, %s)", since,
+                       self._recover_tries, self._frame_stats())
+        if self._recover_tries >= NO_FACE_FAST_TRIES:
+            self._recover_gap_s = NO_FACE_AWAY_RECOVER_S
         self._next_recover_mono = now + self._recover_gap_s
         self._recover_gap_s = min(self._recover_gap_s * 2,
-                                  NO_FACE_MAX_RECOVER_S)
+                                  max(NO_FACE_MAX_RECOVER_S,
+                                      self._recover_gap_s))
         self._detect_step = min(self._detect_step + 1,
                                 len(DETECT_CONFIDENCE_STEPS) - 1)
         self._rebuild_model_inline()

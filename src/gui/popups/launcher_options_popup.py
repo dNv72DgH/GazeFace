@@ -166,6 +166,8 @@ MACRO_PRESETS = [
     ("Double click", "mouse double", "double-click"),
     ("Wheel up", "wheel up", "wheel-up"),
     ("Wheel down", "wheel down", "wheel-down"),
+    ("Wheel rotation mode, up/down", "wheelmode vh", "scroll"),
+    ("Wheel rotation mode, left/right", "wheelmode hv", "scroll"),
     ("Drag left", "drag left", "drag-left"),
     ("Long press left", "hold left %d" % DEFAULT_LONG_PRESS_MS,
      "long-press"),
@@ -276,6 +278,8 @@ def _macro_text(item):
             lines.append("text " + str(s["text"]))
         elif "mouse" in s:
             lines.append("mouse " + str(s["mouse"]))
+        elif "wheelmode" in s:
+            lines.append("wheelmode " + str(s["wheelmode"]))
         elif "wheel" in s:
             n = int(s.get("n", 1) or 1)
             lines.append("wheel %s%s" % (s["wheel"],
@@ -312,6 +316,12 @@ def _parse_macro(text):
             steps.append({"text": line[5:]})
         elif low.startswith("mouse "):
             steps.append({"mouse": line[6:].strip().lower()})
+        elif low.startswith("wheelmode"):
+            # "wheelmode vh" / "wheelmode hv" - head tracking turns the
+            # wheel (src/wheel_mode.py) until a gesture ends it.
+            parts = low[9:].split()
+            steps.append({"wheelmode": parts[0] if parts and parts[0]
+                          in ("vh", "hv") else "vh"})
         elif low.startswith("wheel "):
             # "wheel up" / "wheel down 3"
             parts = low[6:].split()
@@ -1578,6 +1588,20 @@ class MouseStepDialog:
                 wrow, text=arrow, width=52,
                 command=lambda dd=d: self._pick_wheel(on_pick, dd)).pack(
                     side="left", padx=3)
+
+        # --- wheel rotation mode (head tracking turns the wheel) ---
+        customtkinter.CTkLabel(
+            body, text=t("Wheel rotation mode"),
+            font=customtkinter.CTkFont(weight="bold")).grid(
+                row=row + 2, column=0, columnspan=2, padx=10, pady=(16, 4),
+                sticky="w")
+        for i, (label, line) in enumerate(
+                (("Wheel rotation mode, up/down", "wheelmode vh"),
+                 ("Wheel rotation mode, left/right", "wheelmode hv"))):
+            customtkinter.CTkButton(
+                body, text=t(label), width=180,
+                command=lambda ln=line: self._pick(on_pick, ln)).grid(
+                    row=row + 3, column=i, padx=10, pady=8)
 
     def _pick_wheel(self, on_pick, d):
         try:

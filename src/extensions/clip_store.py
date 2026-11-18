@@ -32,6 +32,7 @@ version, or a settings backup restored over it) are merged in and taken
 out of the JSON.
 """
 
+import contextlib
 import logging
 import sqlite3
 import threading
@@ -153,48 +154,67 @@ def count(kind, query=""):
                              args).fetchone()[0]
 
 
+@contextlib.contextmanager
+def _txn():
+    """BEGIN ... COMMIT on the shared connection, ROLLBACK on any error.
+
+    Without the rollback a failed statement (database locked by a second
+    instance, disk full) left the connection inside the transaction, and
+    every later BEGIN raised "cannot start a transaction within a
+    transaction" - history, pin and delete all stopped until a restart.
+    Call with _lock held.
+    """
+    c = _db()
+    if c.in_transaction:            # left over from an earlier failure
+        try:
+            c.execute("ROLLBACK")
+        except Exception:
+            pass
+    c.execute("BEGIN")
+    try:
+        yield c
+        c.execute("COMMIT")
+    except BaseException:
+        try:
+            c.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+
+
 def record(text, cap):
     """Put `text` at the top of the history, keeping at most `cap`
     entries (0 = no limit)."""
     if not text:
         return
-    with _lock:
-        c = _db()
-        c.execute("BEGIN")
+    with _lock, _txn() as c:
         c.execute("INSERT INTO clips(text, hist_ts) VALUES (?, ?)"
                   " ON CONFLICT(text) DO UPDATE SET hist_ts = excluded.hist_ts",
                   (text, time.time()))
         _trim(c, cap)
         _purge(c)
-        c.execute("COMMIT")
 
 
 def pin(texts):
     """Pin `texts`; the last one ends up at the top of the pinned list."""
     now = time.time()
-    with _lock:
-        c = _db()
-        c.execute("BEGIN")
+    with _lock, _txn() as c:
         for i, t in enumerate(texts):
             c.execute("INSERT INTO clips(text, pin_ts) VALUES (?, ?)"
                       " ON CONFLICT(text) DO UPDATE SET pin_ts = excluded.pin_ts",
                       (t, now + i * 1e-6))
-        c.execute("COMMIT")
 
 
 def unpin(texts, cap):
     """Take `texts` off the pinned list and back to the top of the
     history, so an unpinned entry is never lost outright."""
     now = time.time()
-    with _lock:
-        c = _db()
-        c.execute("BEGIN")
+    with _lock, _txn() as c:
         for i, t in enumerate(texts):
             c.execute("UPDATE clips SET pin_ts = NULL, hist_ts = ?"
                       " WHERE text = ?", (now + i * 1e-6, t))
         _trim(c, cap)
         _purge(c)
-        c.execute("COMMIT")
 
 
 def delete(kind, texts):
@@ -202,13 +222,10 @@ def delete(kind, texts):
     altogether (out of the history too)."""
     sets = ("hist_ts = NULL" if kind == HISTORY
             else "hist_ts = NULL, pin_ts = NULL")
-    with _lock:
-        c = _db()
-        c.execute("BEGIN")
+    with _lock, _txn() as c:
         for t in texts:
             c.execute(f"UPDATE clips SET {sets} WHERE text = ?", (t,))
         _purge(c)
-        c.execute("COMMIT")
 
 
 def clear_history():

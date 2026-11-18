@@ -56,7 +56,10 @@ CONTROL_DEBOUNCE_S = 0.7
 # _control_debounced rather than mouse_action(). Chattering prevention
 # applies to them too (see act()).
 CONTROL_ACTIONS = ("pause", "pointer_jump", "gaze_move", "gaze_launcher",
-                   "gaze_clipboard", "gaze_taskswitch", "reset", "cycle")
+                   "gaze_clipboard", "gaze_taskswitch", "reset", "cycle",
+                   "wheel_vh", "wheel_hv")
+# Mouse actions that start the wheel rotation mode (src/wheel_mode.py).
+WHEEL_ACTIONS = {"wheel_vh": "vh", "wheel_hv": "hv"}
 
 # Chattering prevention interval (ms) for a gesture with none set in
 # gesture_chattering_ms. Keep in step with gesture_options_popup.
@@ -141,6 +144,24 @@ def _foreground_note() -> str:
             name or "?", pid, il, (title or "")[:60])
     except Exception as e:
         return "foreground unknown (%s)" % e
+
+
+def split_combo(keysym):
+    """"ctrl+shift+t" -> ["ctrl", "shift", "t"].
+
+    '+' is both the separator and a key of its own (shape_list "plus"),
+    so a binding that ENDS in '+' has the plus key as its base:
+    "+" -> ["+"], "ctrl++" -> ["ctrl", "+"]. Splitting blindly dropped
+    it - Ctrl+Plus pressed Ctrl alone.
+    """
+    keysym = str(keysym)
+    if keysym == "+":
+        return ["+"]
+    if keysym.endswith("++"):
+        parts = [p for p in keysym[:-2].split("+") if p] + ["+"]
+    else:
+        parts = [p for p in keysym.split("+") if p]
+    return parts or [keysym]
 
 
 class Keybinder(metaclass=Singleton):
@@ -511,6 +532,20 @@ class Keybinder(metaclass=Singleton):
         speed = float(cfg.get("gaze_move_speed", 50))
         MouseController().begin_gaze_move(display_ms, speed)
 
+    def _fire_wheel_mode(self, kind: str) -> None:
+        """Start the wheel rotation mode (head tracking turns the wheel).
+        Suppressed while face control is off - it is driven by the head."""
+        try:
+            if not MouseController().is_active.get():
+                logger.info("Wheel rotation skipped: face control is off")
+                return
+        except Exception:
+            pass
+        if self._calibration_running():
+            logger.info("Wheel rotation skipped: calibration running")
+            return
+        MouseController().begin_wheel_mode(kind)
+
     def _fire_gaze_launcher(self) -> None:
         """Open the gaze launcher (face-driven; suppressed when face
         control is off)."""
@@ -841,11 +876,7 @@ class Keybinder(metaclass=Singleton):
         joined with '+' ("ctrl+shift+t"). Returning a list lets the press /
         release paths treat both the same way: press left-to-right, release
         right-to-left."""
-        if "+" in keysym and len(keysym) > 1:
-            parts = [p for p in keysym.split("+") if p]
-            if parts:
-                return parts
-        return [keysym]
+        return split_combo(keysym)
 
     def keyboard_action(self, val, keysym, thres, mode):
 
@@ -1113,7 +1144,9 @@ class Keybinder(metaclass=Singleton):
             # ceiling / 1000; default 5.0. The sub-monitor bar uses it so
             # its deflection matches the rescaled threshold slider.
             try:
-                ceil = max(1, min(5000, int(slider_max.get(
+                # 11 = page_select_gestures.CEILING_MIN: the meter and
+                # the slider must agree on the smallest usable range.
+                ceil = max(11, min(5000, int(slider_max.get(
                     shape_name, 5000)))) / 1000.0
             except Exception:
                 ceil = 5.0
@@ -1214,6 +1247,8 @@ class Keybinder(metaclass=Singleton):
         # Gaze move: if a directional move is running, ANY gesture fire
         # ends it (and then runs that gesture's own action below).
         gm_active = MouseController().is_gaze_move_active()
+        # The wheel rotation mode ends the same way.
+        wm_active = MouseController().wheel_mode() is not None
 
         for shape_name, v in bindings.items():
             if shape_name not in shape_list.blendshape_names:
@@ -1280,6 +1315,18 @@ class Keybinder(metaclass=Singleton):
                     self.key_states[gm_state] = True
                     continue
 
+            # Wheel rotation mode: any gesture's rising edge ends it. A
+            # wheel action just ends it (so its gesture toggles the mode);
+            # any other gesture then runs its own action.
+            if wm_active and (val > thres) and (
+                    self.key_states.get(gm_state) is False):
+                MouseController().end_wheel_mode("gesture %s" % shape_name)
+                wm_active = False
+                if action in WHEEL_ACTIONS:
+                    self.key_states[gm_state] = True
+                    self._record_input()
+                    continue
+
             # Chattering prevention for the control actions (launcher,
             # pause, gaze jump / move, ...): they never reach
             # mouse_action(), where clicks and keys are checked. Same rule
@@ -1320,6 +1367,19 @@ class Keybinder(metaclass=Singleton):
                         logger.debug("pointer_jump debounced")
                     else:
                         self._fire_pointer_jump()
+                elif (val < thres) and (self.key_states[state_name] is True):
+                    self.key_states[state_name] = False
+
+            elif (device == "mouse") and (action in WHEEL_ACTIONS):
+                # Start the wheel rotation mode. (A running one was ended
+                # by the check above, which consumed that edge.)
+                state_name = "mouse_" + action
+                if (val > thres) and (self.key_states[state_name] is False):
+                    self.key_states[state_name] = True
+                    if self._control_debounced(state_name):
+                        logger.debug("%s debounced", action)
+                    else:
+                        self._fire_wheel_mode(WHEEL_ACTIONS[action])
                 elif (val < thres) and (self.key_states[state_name] is True):
                     self.key_states[state_name] = False
 

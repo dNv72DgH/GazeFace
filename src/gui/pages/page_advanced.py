@@ -89,6 +89,8 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         # so the section can be brought back by restoring this call.
         # self._build_overlay_section()
         self._build_calibration_section()
+        # Head position correction (dev) is disabled and hidden
+        # (head_shift.DISABLED); the section builder is kept for tuning.
         self._build_recovery_section()
         self._build_language_section()
         self._build_update_section()
@@ -299,6 +301,99 @@ class PageAdvanced(SafeDisposableScrollableFrame):
             command=lambda: ConfigManager().write_app_setting(
                 gaze_calibrator.CONFIRM_KEY,
                 bool(self.cal_confirm_var.get()))))
+
+        np_row = self._row_frame()
+        customtkinter.CTkLabel(np_row, text=t("Number of points")).pack(
+            side="left", padx=(0, 8))
+        self.cal_points_var = tkinter.IntVar(
+            value=gaze_calibrator.point_count())
+        for n, label in ((16, t("16 points")),
+                         (8, t("8 points (about 20 s)"))):
+            customtkinter.CTkRadioButton(
+                np_row, text=label, variable=self.cal_points_var, value=n,
+                command=lambda: ConfigManager().write_app_setting(
+                    gaze_calibrator.POINTS_KEY,
+                    int(self.cal_points_var.get()))).pack(
+                        side="left", padx=(0, 12))
+
+    # ---------------------------------------------------------------- #
+    # Head position correction (developer tuning, app-wide)
+    # ---------------------------------------------------------------- #
+
+    def _build_head_shift_section(self):
+        from src import head_shift
+        self._section(t("Head position correction (dev)"))
+        p = head_shift.params()
+        self._hs_strength_row(t("Left/right strength (%)"),
+                              head_shift.X_KEY, p[head_shift.X_KEY])
+        self._hs_strength_row(t("Up/down strength (%)"),
+                              head_shift.Y_KEY, p[head_shift.Y_KEY])
+
+        self.hs_inv_x_var = tkinter.BooleanVar(
+            value=p[head_shift.INVERT_X_KEY])
+        self.hs_inv_y_var = tkinter.BooleanVar(
+            value=p[head_shift.INVERT_Y_KEY])
+        irow = self._row_frame()
+        customtkinter.CTkCheckBox(
+            master=irow, text=t("Invert left/right"),
+            variable=self.hs_inv_x_var, onvalue=True, offvalue=False,
+            command=lambda: head_shift.set_param(
+                head_shift.INVERT_X_KEY, self.hs_inv_x_var.get())).pack(
+                    side="left", padx=(0, 20))
+        customtkinter.CTkCheckBox(
+            master=irow, text=t("Invert up/down"),
+            variable=self.hs_inv_y_var, onvalue=True, offvalue=False,
+            command=lambda: head_shift.set_param(
+                head_shift.INVERT_Y_KEY, self.hs_inv_y_var.get())).pack(
+                    side="left")
+
+    def _hs_strength_row(self, label, key, value):
+        """Slider + typed entry for one head_shift strength (percent).
+        Live while dragging, saved on release or on a valid entry."""
+        from src import head_shift
+        row = self._row_frame()
+        lbl = customtkinter.CTkLabel(master=row, text=label, anchor="w",
+                                     width=150)
+        lbl.cget("font").configure(size=12)
+        lbl.pack(side="left", padx=(0, 10))
+        var = tkinter.StringVar(value=str(value))
+        entry = customtkinter.CTkEntry(master=row, textvariable=var, width=80)
+        ok_color = entry.cget("fg_color")
+        state = {}
+
+        def on_entry(*_a):
+            try:
+                v = int(var.get().strip())
+            except ValueError:
+                v = None
+            if (v is None or not head_shift.STRENGTH_MIN <= v
+                    <= head_shift.STRENGTH_MAX):
+                entry.configure(fg_color="#ee9e9d")
+                return
+            entry.configure(fg_color=ok_color)
+            slider.set(v)
+            head_shift.set_param(key, v)
+
+        def on_slide(v):
+            v = head_shift.clamp_strength(v)
+            head_shift.set_param(key, v, save=False)
+            var.trace_vdelete("w", state["trace"])
+            var.set(str(v))
+            state["trace"] = var.trace("w", on_entry)
+            entry.configure(fg_color=ok_color)
+
+        slider = customtkinter.CTkSlider(
+            master=row, from_=head_shift.STRENGTH_MIN,
+            to=head_shift.STRENGTH_MAX, width=240,
+            number_of_steps=(head_shift.STRENGTH_MAX
+                             - head_shift.STRENGTH_MIN) // 5,
+            command=on_slide)
+        slider.pack(side="left")
+        slider.bind("<ButtonRelease-1>", lambda _e: head_shift.set_param(
+            key, slider.get()))
+        slider.set(value)
+        entry.pack(side="left", padx=(16, 0))
+        state["trace"] = var.trace("w", on_entry)
 
     # ---------------------------------------------------------------- #
     # Auto recovery
@@ -698,38 +793,8 @@ class PageAdvanced(SafeDisposableScrollableFrame):
         customtkinter.CTkButton(
             krow, text=t("Open gaze keyboard"), width=200,
             command=self._open_gaze_keyboard).pack(side="left")
-
-        # Implicit re-calibration: learns the gaze drift from the cells
-        # the user executes in the gaze grids, so a head move does not
-        # force a full recalibration.
-        self.online_cal_var = tkinter.BooleanVar(
-            value=bool(ConfigManager().config.get(
-                "gaze_online_cal_enabled", True)))
-        oc_row = self._row_frame()
-        customtkinter.CTkCheckBox(
-            oc_row, text=t("Auto-correct gaze drift"),
-            variable=self.online_cal_var, onvalue=True, offvalue=False,
-            command=self._on_online_cal_toggle).pack(side="left",
-                                                     padx=(0, 12))
-        customtkinter.CTkButton(
-            oc_row, text=t("Reset drift correction"), width=180,
-            command=self._reset_online_cal).pack(side="left")
-
-    def _on_online_cal_toggle(self):
-        try:
-            ConfigManager().set_temp_config(
-                "gaze_online_cal_enabled",
-                bool(self.online_cal_var.get()))
-            ConfigManager().apply_config()
-        except Exception as e:
-            logger.error("gaze_online_cal_enabled write failed: %s", e)
-
-    def _reset_online_cal(self):
-        try:
-            from src import gaze_online_cal
-            gaze_online_cal.reset()
-        except Exception as e:
-            logger.error("gaze bias reset failed: %s", e)
+        # "Auto-correct gaze drift" (src/gaze_online_cal.py) was here; it
+        # is disabled and hidden because it never helped in practice.
 
     def _on_kbd_dwell_changed(self, *_a):
         try:

@@ -372,7 +372,7 @@ SNAP_NOTIFY_OLD_KEY = "pointer_jump_snap_debug_color"
 def snap_notify_enabled(cfg) -> bool:
     if SNAP_NOTIFY_KEY in cfg:
         return bool(cfg[SNAP_NOTIFY_KEY])
-    return bool(cfg.get(SNAP_NOTIFY_OLD_KEY, True))
+    return bool(cfg.get(SNAP_NOTIFY_OLD_KEY, False))
 
 
 class MouseController(metaclass=Singleton):
@@ -426,6 +426,10 @@ class MouseController(metaclass=Singleton):
         # True while a gaze grid (launcher / clipboard / task switcher /
         # keyboard) is open — freezes head/gaze cursor like gaze move.
         self._gaze_grid_active = False
+        # Wheel rotation mode (src/wheel_mode.py): "vh" / "hv" while head
+        # tracking turns the wheel instead of moving the pointer.
+        self._wheel_kind = None
+        self._wheel_state = None
         # Set by FrameCamPreview so the launcher can toggle the
         # sub-monitor (must be invoked on the tk main thread).
         self._submonitor_toggle = None
@@ -596,6 +600,10 @@ class MouseController(metaclass=Singleton):
                     time.sleep(0.02)
                     continue
 
+                if self._wheel_kind is not None:
+                    self._wheel_tick()
+                    continue
+
                 mode = ConfigManager().config.get("tracking_mode", "head")
                 if mode != self._last_tracking_mode:
                     # Transitioning mode — flush per-mode buffers so the
@@ -750,6 +758,125 @@ class MouseController(metaclass=Singleton):
     def is_gaze_move_active(self) -> bool:
         return self._gaze_move_active
 
+    # ------------------------------------------------------------------ #
+    # Wheel rotation mode (src/wheel_mode.py)
+    # ------------------------------------------------------------------ #
+
+    def wheel_mode(self):
+        """"vh" / "hv" while the wheel rotation mode runs, else None."""
+        return self._wheel_kind
+
+    def begin_wheel_mode(self, kind: str) -> None:
+        from src import wheel_mode
+        if kind not in wheel_mode.KINDS:
+            return
+        if self._gaze_move_active:
+            self.cancel_gaze_move()
+        self._wheel_state = {
+            "since": time.monotonic(), "origin": None, "settle": [],
+            "hist": deque(maxlen=5), "last": None,
+            "drivers": {a: wheel_mode.AxisDriver() for a in wheel_mode.AXES},
+        }
+        self._wheel_kind = kind
+        logger.info("Wheel rotation mode started (%s)", kind)
+        self._wheel_badge(kind)
+
+    def end_wheel_mode(self, why: str = "") -> bool:
+        """End the wheel rotation mode. True if it was running."""
+        if self._wheel_kind is None:
+            return False
+        kind = self._wheel_kind
+        self._wheel_kind = None
+        self._wheel_state = None
+        self._wheel_badge(None)
+        # Head tracking resumes from rest: the head moved meanwhile.
+        self.delay_count = 0
+        self.prev_x = 0
+        self.prev_y = 0
+        self.buffer = np.zeros([N_BUFFER, 2])
+        try:
+            self.gaze_smooth.clear()
+        except Exception:
+            pass
+        logger.info("Wheel rotation mode ended (%s)%s", kind,
+                    (" - %s" % why) if why else "")
+        return True
+
+    def _wheel_badge(self, kind) -> None:
+        """Show (kind) or hide (None) the badge beside the pointer that
+        says the wheel rotation mode is on. Any thread."""
+        root = self._tk_root
+        if root is None:
+            return
+        try:
+            from src.gui import wheel_indicator
+            if kind is None:
+                root.after(0, wheel_indicator.hide)
+            else:
+                root.after(0, lambda: wheel_indicator.show(root, kind))
+        except Exception as e:
+            logger.error("wheel badge failed: %s", e)
+
+    def _wheel_tick(self) -> None:
+        from src import mouse_input, wheel_mode
+        st = self._wheel_state
+        kind = self._wheel_kind
+        loc = self.curr_track_loc
+        # Paused for anything that owns the screen or the pointer, and
+        # while a gesture is being made (the face moves with it).
+        if (st is None or loc is None or self._jump_locked
+                or self._gaze_grid_active or self._gaze_move_active
+                or self._motion_frozen()):
+            if st is not None:
+                st["last"] = None
+                for d in st["drivers"].values():
+                    d.moving = False
+                if st["origin"] is None:
+                    # Not settled yet: the settle period starts over once
+                    # the head is back in charge (a launcher still closing).
+                    st["since"] = time.monotonic()
+                    st["settle"].clear()
+            time.sleep(0.01)
+            return
+        now = time.monotonic()
+        st["hist"].append((float(loc[0]), float(loc[1])))
+        hx = sum(p[0] for p in st["hist"]) / len(st["hist"])
+        hy = sum(p[1] for p in st["hist"]) / len(st["hist"])
+        if st["origin"] is None:
+            st["settle"].append((hx, hy))
+            if now - st["since"] >= wheel_mode.SETTLE_S:
+                n = len(st["settle"])
+                st["origin"] = (sum(p[0] for p in st["settle"]) / n,
+                                sum(p[1] for p in st["settle"]) / n)
+                st["last"] = now
+            time.sleep(0.01)
+            return
+        dt = now - (st["last"] or now)
+        st["last"] = now
+        try:
+            fw = float(ConfigManager().config.get("fix_width", 640)) or 640.0
+        except Exception:
+            fw = 640.0
+        off = {"x": (hx - st["origin"][0]) / fw * 100.0,
+               "y": (hy - st["origin"][1]) / fw * 100.0}
+        cfg = ConfigManager().config
+        sent = False
+        for axis in wheel_mode.AXES:
+            opts = wheel_mode.options(cfg, kind, axis)
+            n = st["drivers"][axis].step(opts, off[axis], dt)
+            if n <= 0:
+                continue
+            horiz, sign = wheel_mode.target(kind, axis)
+            sign = sign if off[axis] > 0 else -sign
+            if opts["invert"]:
+                sign = -sign
+            for _ in range(n):
+                mouse_input.wheel_delta(horiz, sign * opts["amount"])
+            sent = True
+        if sent:
+            _keep_display_awake()
+        time.sleep(0.01)
+
     def begin_gaze_move(self, display_ms: int, speed_px_s: float) -> None:
         """Start the directional Gaze move interaction (overlay + move).
         No-op if one is already running or the UI isn't ready."""
@@ -840,6 +967,24 @@ class MouseController(metaclass=Singleton):
         # Released last so a tick can't wake on stale buffers in the gap.
         self._gaze_grid_active = False
 
+    def warp_pointer(self, x: int, y: int) -> None:
+        """Put the pointer at (x, y) (physical screen px, any monitor) and
+        let head tracking resume from rest there. Any thread."""
+        try:
+            u = ctypes.windll.user32
+            vx, vy = u.GetSystemMetrics(76), u.GetSystemMetrics(77)
+            vw, vh = u.GetSystemMetrics(78), u.GetSystemMetrics(79)
+            if vw <= 0 or vh <= 0:
+                vx, vy, vw, vh = 0, 0, self.screen_w, self.screen_h
+            _set_cursor_absolute(x, y, vw, vh, vx, vy)
+            self.delay_count = 0
+            self.prev_x = 0
+            self.prev_y = 0
+            self.buffer = np.zeros([N_BUFFER, 2])
+            self.gaze_smooth.clear()
+        except Exception as e:
+            logger.error("warp pointer failed: %s", e)
+
     def begin_pointer_jump(self, delay_ms: int) -> None:
         if self._gaze_move_active:
             logger.info("Pointer jump ignored: gaze move in progress")
@@ -896,7 +1041,7 @@ class MouseController(metaclass=Singleton):
                 # (src/click_snap.py); otherwise exactly as before.
                 cfg = ConfigManager().config or {}
                 snapped = False
-                if cfg.get("pointer_jump_snap", False):
+                if cfg.get("pointer_jump_snap", True):
                     try:
                         from src import click_snap
                         hit = click_snap.find(
@@ -1181,6 +1326,7 @@ class MouseController(metaclass=Singleton):
         self.is_active.set(flag)
         self._active_flag = bool(flag)
         if not flag:
+            self.end_wheel_mode("face control paused")
             # Pausing face control freezes the dispatch loop for normal
             # mouse/keyboard actions, so a gesture-held button/key would
             # otherwise stay physically pressed for the entire pause.

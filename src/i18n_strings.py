@@ -116,6 +116,25 @@ JA = {
     "Reset cursor to center": "カーソルを中央へ戻す",
     "Switch focus between monitors": "モニタを切り替える",
     "Gaze Jump": "視線ジャンプ",
+    "Wheel rotation mode (up/down, left/right)": "首振りホイールモード 上下左右",
+    "Wheel rotation mode (left/right, up/down)": "首振りホイールモード 左右上下",
+    'Head tracking turns the mouse wheel instead of moving the pointer. Where your head is when it starts is the origin: while the head is away from it the wheel keeps turning, and the further away, the faster. Nodding scrolls up and down, turning the head scrolls left and right. The same gesture again ends it; any other gesture ends it and immediately runs its own action.':
+        'ヘッドトラッキングでポインタを動かす代わりにマウスホイールを回します。開始した時の頭の位置が起点で、起点から離れている間はホイールを回し続け、離れるほど速く回します。上下の首振りで縦スクロール、左右の首振りで横スクロールします。もう一度同じジェスチャーで終了、その他のジェスチャーで終了してそれに割り当てられた機能を即実行します。',
+    'Head tracking turns the mouse wheel instead of moving the pointer. Where your head is when it starts is the origin: while the head is away from it the wheel keeps turning, and the further away, the faster. Turning the head scrolls up and down, nodding scrolls left and right. The same gesture again ends it; any other gesture ends it and immediately runs its own action.':
+        'ヘッドトラッキングでポインタを動かす代わりにマウスホイールを回します。開始した時の頭の位置が起点で、起点から離れている間はホイールを回し続け、離れるほど速く回します。左右の首振りで縦スクロール、上下の首振りで横スクロールします。もう一度同じジェスチャーで終了、その他のジェスチャーで終了してそれに割り当てられた機能を即実行します。',
+    "Wheel rotation mode, up/down": "首振りホイールモード 上下左右",
+    "Wheel rotation mode, left/right": "首振りホイールモード 左右上下",
+    "Head up/down": "上下の首振り",
+    "Head left/right": "左右の首振り",
+    "Scrolls vertically": "縦スクロール",
+    "Scrolls horizontally": "横スクロール",
+    "Scroll amount": "スクロール量",
+    "Dead stroke (0.1%)": "無効ストローク範囲 (0.1%単位)",
+    "Rotation speed (per 10 s)": "回転速度 (10秒あたりの回数)",
+    "Acceleration by distance": "感度",
+    "Invert": "反転",
+    "Disable": "無効",
+    "Wheel rotation mode": "首振りホイールモード",
     # Gesture names
     "Close left eye": "左目を閉じる",
     "Close right eye": "右目を閉じる",
@@ -416,6 +435,7 @@ JA = {
     "Selection time (ms)": "視線選択時間 (ms)",
     "Background transparency (%)": "背景の透過度 (%)",
     "Show page buttons": "ページ送りボタンを表示",
+    "Move the pointer to the switched window": "切り替えたウィンドウにポインタを移動",
     "Show pinned-list cell": "ピン留め一覧ボタンを表示",
     "Manage": "管理",
     "Manage / pin": "管理・ピン留め",
@@ -608,7 +628,10 @@ JA = {
         "カメラが見つかりません。\n接続されていないか、他アプリが使用中です。",
     "The camera is not connected, so the calibration cannot run. Connect the camera first, restart the app, and then run it.":
         "カメラが接続されていない為、キャリブレーションを実行できません。先にカメラを接続し、アプリを再起動してから実行して下さい。",
-    "Jump to the nearest button or link": "直近のボタンやリンクにジャンプ",
+    "Jump to the nearest button or link": "リンク吸着",
+    "Number of points": "点の数",
+    "16 points": "16点",
+    "8 points (about 20 s)": "8点（約20秒）",
     "If there is a button or link near where the jump lands, the pointer goes onto it. In some apps and sites this does not work, or picks the wrong thing.":
         "ジャンプ先の近くにボタンやリンクがあれば、そこにジャンプします。アプリやサイトによっては無効、または誤認識する事があります。",
     "Range (px)": "範囲 (px)",
@@ -632,14 +655,19 @@ JA = {
     "No face can be detected. Try moving your head a lot or changing your expression. A face may not be detected in a very dark or very bright room.":
         "顔が検出できません。頭を大きく動かしたり、表情を変えてみて下さい。真っ暗な部屋や明るすぎる部屋では検出できない事があります。",
     "Confirm before running": "実行前に確認する",
+    "Head position correction (dev)": "頭の位置補正 (開発用)",
+    "Left/right strength (%)": "左右の強さ (%)",
+    "Up/down strength (%)": "上下の強さ (%)",
+    "Invert left/right": "左右反転",
+    "Invert up/down": "上下反転",
     "Start the gaze calibration?": "視線キャリブレーションを開始しますか？",
     "Notify me of updates": "更新を通知する",
     "Updating GazeFace... It starts again by itself when the update is done.":
         "GazeFace を更新しています… 更新が終わると自動で起動します。",
     "Starting GazeFace...": "GazeFace を起動しています…",
     'Key / mouse macro': 'キー・マウス マクロ',
-    'With a macro, even a complicated operation takes nothing but your gaze. Choosing the launcher button runs the key and mouse operations below in order. One line is one step, run from the top; the buttons on the right add lines.\nkey ctrl+c: press keys (+ for together, e.g. ctrl+shift+s, win+up, alt+f4, enter, esc, f5)\ntext Hello: type text (pasted through the clipboard, so its content is replaced)\nwait 500: wait this many milliseconds\nmouse left / right / middle / double: click where the pointer is\nwheel up 3: scroll (up / down / left / right, and how many notches)\ndrag left: keep the button pressed; move the pointer, and the next click lets go\nhold left 800: press and hold in place for this many milliseconds\nswipe ↑ medium: press, move that way, let go, and return to the start (small / medium / large = 10 / 25 / 45% of the screen height, or a number of pixels)':
-        'キーマクロを使えば、複雑な操作も視線だけで行えます。ランチャーのボタンを選ぶと、ここに書いたキー操作やマウス操作を順番に実行します。1 行が 1 つの操作で、上から順に実行します。右のボタンで行を追加できます。\nkey ctrl+c: キーを押す（+ で同時押し。例: ctrl+shift+s、win+up、alt+f4、enter、esc、f5）\ntext こんにちは: 文字を入力（クリップボード経由で貼り付けるため、クリップボードの内容は置き換わります）\nwait 500: 指定したミリ秒だけ待つ\nmouse left / right / middle / double: 今のポインターの位置でクリック\nwheel up 3: ホイールを回す（up / down / left / right と回数）\ndrag left: ボタンを押したままにする。ポインターを動かし、次のクリックで離す\nhold left 800: その場で指定したミリ秒だけ長押し\nswipe ↑ medium: 押したまま指定した方向へ動かして離し、元の位置に戻る（small / medium / large = 画面の高さの 10 / 25 / 45%、または px の数値）',
+    'With a macro, even a complicated operation takes nothing but your gaze. Choosing the launcher button runs the key and mouse operations below in order. One line is one step, run from the top; the buttons on the right add lines.\nkey ctrl+c: press keys (+ for together, e.g. ctrl+shift+s, win+up, alt+f4, enter, esc, f5)\ntext Hello: type text (pasted through the clipboard, so its content is replaced)\nwait 500: wait this many milliseconds\nmouse left / right / middle / double: click where the pointer is\nwheel up 3: scroll (up / down / left / right, and how many notches)\ndrag left: keep the button pressed; move the pointer, and the next click lets go\nhold left 800: press and hold in place for this many milliseconds\nswipe ↑ medium: press, move that way, let go, and return to the start (small / medium / large = 10 / 25 / 45% of the screen height, or a number of pixels)\nwheelmode vh / hv: start the wheel rotation mode (head tracking turns the wheel: vh = nodding scrolls up and down, hv = turning the head does)':
+        'キーマクロを使えば、複雑な操作も視線だけで行えます。ランチャーのボタンを選ぶと、ここに書いたキー操作やマウス操作を順番に実行します。1 行が 1 つの操作で、上から順に実行します。右のボタンで行を追加できます。\nkey ctrl+c: キーを押す（+ で同時押し。例: ctrl+shift+s、win+up、alt+f4、enter、esc、f5）\ntext こんにちは: 文字を入力（クリップボード経由で貼り付けるため、クリップボードの内容は置き換わります）\nwait 500: 指定したミリ秒だけ待つ\nmouse left / right / middle / double: 今のポインターの位置でクリック\nwheel up 3: ホイールを回す（up / down / left / right と回数）\ndrag left: ボタンを押したままにする。ポインターを動かし、次のクリックで離す\nhold left 800: その場で指定したミリ秒だけ長押し\nswipe ↑ medium: 押したまま指定した方向へ動かして離し、元の位置に戻る（small / medium / large = 画面の高さの 10 / 25 / 45%、または px の数値）\nwheelmode vh / hv: 首振りホイールモードを開始 (ヘッドトラッキングでホイールを回す。vh = 上下の首振りで縦スクロール、hv = 左右の首振りで縦スクロール)',
     "The full edition could not be set up, so GazeFace runs as the standard edition. Run the installer again to retry.":
         "完全版のセットアップに失敗したため、GazeFace は通常版として動いています。もう一度インストーラーを実行してください。",
     "The update failed. Starting GazeFace...": "更新に失敗しました。GazeFace を起動しています…",
@@ -673,6 +701,21 @@ JA = {
         "アイテムが未登録です。機能オプションでアイテムを登録して下さい。この画面は60秒後に自動終了します。",
 }
 
+# English display names that differ from their source string. The source
+# strings stay as they are because they double as lookup keys (help
+# topics, action tables, launcher commands).
+EN = {
+    "Wheel rotation mode": "Head-turn wheel mode",
+    "Wheel rotation mode (up/down, left/right)":
+        "Head-turn wheel mode (up/down, left/right)",
+    "Wheel rotation mode (left/right, up/down)":
+        "Head-turn wheel mode (left/right, up/down)",
+    "Wheel rotation mode, up/down": "Head-turn wheel mode, up/down",
+    "Wheel rotation mode, left/right": "Head-turn wheel mode, left/right",
+    "Jump to the nearest button or link": "Link snap",
+}
+
 TRANSLATIONS = {
+    "en": EN,
     "ja": JA,
 }

@@ -24,13 +24,7 @@ import logging
 import time
 import tkinter as tk
 
-import numpy as np
-
 from src.config_manager import ConfigManager
-from src.detectors import FaceMesh
-from src.detectors.facemesh import (
-    poly_features, poly_features_pose, default_gaze_cal,
-)
 
 logger = logging.getLogger("GazeKeyboard")
 
@@ -158,26 +152,13 @@ class GazeKeyboard:
     # ---------------------------------------------------------------- #
 
     def _gaze_screen_pos(self):
-        g = FaceMesh().get_gaze_ratio()
-        if g is None:
+        # The one shared mapping (calibration + head-position
+        # compensation), not a private copy of it.
+        from src import gaze_mapping
+        p = gaze_mapping.predict(self.W, self.H)
+        if p is None:
             return None
-        rx, ry = g
-        cal = ConfigManager().config.get("gaze_calibration", None)
-        if (isinstance(cal, dict) and "cx" in cal and "cy" in cal
-                and len(cal["cx"]) in (6, 8)
-                and len(cal["cx"]) == len(cal["cy"])):
-            cx = np.array(cal["cx"], dtype=np.float64)
-            cy = np.array(cal["cy"], dtype=np.float64)
-        else:
-            d = default_gaze_cal(self.W, self.H)
-            cx = np.array(d["cx"], dtype=np.float64)
-            cy = np.array(d["cy"], dtype=np.float64)
-        if len(cx) == 8:
-            hx, hy = FaceMesh().get_head_pose()
-            f = poly_features_pose(rx, ry, hx, hy)
-        else:
-            f = poly_features(rx, ry)
-        self._gaze_hist.append((float(f @ cx), float(f @ cy)))
+        self._gaze_hist.append(p)
         if len(self._gaze_hist) > 5:
             self._gaze_hist.pop(0)
         n = len(self._gaze_hist)

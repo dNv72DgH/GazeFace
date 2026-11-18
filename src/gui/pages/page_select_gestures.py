@@ -75,6 +75,15 @@ ENTRY_SCALE = float(SLIDER_FACTOR)
 ENTRY_MIN = SLIDER_MIN
 ENTRY_MAX = SLIDER_MAX
 
+# The floor must stay at least this far under the ceiling (slider units),
+# or the slider would have no travel left. The ceiling itself is held
+# this far above SLIDER_MIN for the same reason: a slider whose two ends
+# coincide divides by zero in CTkSlider.set(), and every binding page is
+# built at start-up, so a saved ceiling of 0 or 1 kept the app from
+# starting at all.
+MIN_SPAN = 10
+CEILING_MIN = SLIDER_MIN + MIN_SPAN
+
 
 def gesture_ceiling(gesture):
     """Per-gesture threshold-slider ceiling in slider units (1..5000).
@@ -89,13 +98,9 @@ def gesture_ceiling(gesture):
              or {}).get(gesture)
         if m is None:
             return SLIDER_MAX
-        return max(SLIDER_MIN, min(SLIDER_MAX, int(m)))
+        return max(CEILING_MIN, min(SLIDER_MAX, int(m)))
     except Exception:
         return SLIDER_MAX
-
-# The floor must stay at least this far under the ceiling (slider units),
-# or the slider would have no travel left.
-MIN_SPAN = 10
 
 
 def gesture_floor(gesture):
@@ -214,6 +219,8 @@ class FrameSelectGesture(SafeDisposableFrame):
         (keeps its width, changes only its right-end value)."""
         ceiling = gesture_ceiling(gesture_name)
         floor = gesture_floor(gesture_name)
+        if floor >= ceiling:            # never a zero-length slider
+            floor = SLIDER_MIN
         div["_ceiling"] = ceiling
         div["_floor"] = floor
         try:

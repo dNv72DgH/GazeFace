@@ -40,7 +40,5 @@ def get_language() -> str:
 
 def t(text: str) -> str:
     """Translate a source string. Falls back to the source on miss."""
-    if _current_language == "en":
-        return text
     table = TRANSLATIONS.get(_current_language, {})
     return table.get(text, text)

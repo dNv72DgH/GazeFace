@@ -145,6 +145,8 @@ HELP_TEXTS = {
     "Start Gaze move right after the jump": (
         "Start Gaze move right after the jump",
         "Makes the fine movement quick. Recommended on."),
+    "Wheel rotation mode (up/down, left/right)": ("Wheel rotation mode (up/down, left/right)", 'Head tracking turns the mouse wheel instead of moving the pointer. Where your head is when it starts is the origin: while the head is away from it the wheel keeps turning, and the further away, the faster. Nodding scrolls up and down, turning the head scrolls left and right. The same gesture again ends it; any other gesture ends it and immediately runs its own action.'),
+    "Wheel rotation mode (left/right, up/down)": ("Wheel rotation mode (left/right, up/down)", 'Head tracking turns the mouse wheel instead of moving the pointer. Where your head is when it starts is the origin: while the head is away from it the wheel keeps turning, and the further away, the faster. Turning the head scrolls up and down, nodding scrolls left and right. The same gesture again ends it; any other gesture ends it and immediately runs its own action.'),
     "Gaze move": (
         "Gaze move",
         "Look at one of the arrows on screen to move the pointer that "
@@ -172,7 +174,10 @@ HELP_TEXTS = {
         "milliseconds\n"
         "swipe ↑ medium: press, move that way, let go, and return to the "
         "start (small / medium / large = 10 / 25 / 45% of the screen "
-        "height, or a number of pixels)"),
+        "height, or a number of pixels)\n"
+        "wheelmode vh / hv: start the wheel rotation mode (head tracking "
+        "turns the wheel: vh = nodding scrolls up and down, hv = "
+        "turning the head does)"),
     # ---- per-tool gesture maps ----
     "Launcher gestures": (
         "Launcher gestures",

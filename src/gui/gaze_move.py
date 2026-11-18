@@ -40,13 +40,8 @@ import time
 import tkinter as tk
 from collections import deque
 
-import numpy as np
-
 from src.config_manager import ConfigManager
 from src.detectors import FaceMesh
-from src.detectors.facemesh import (
-    poly_features, poly_features_pose, default_gaze_cal,
-)
 
 logger = logging.getLogger("GazeMove")
 
@@ -251,26 +246,12 @@ class GazeMoveSession:
     # ---------------------------------------------------------------- #
 
     def _gaze_screen_pos(self):
-        g = FaceMesh().get_gaze_ratio()
-        if g is None:
-            return None
-        rx, ry = g
-        cal = ConfigManager().config.get("gaze_calibration", None)
-        if (isinstance(cal, dict) and "cx" in cal and "cy" in cal
-                and len(cal["cx"]) in (6, 8)
-                and len(cal["cx"]) == len(cal["cy"])):
-            cx = np.array(cal["cx"], dtype=np.float64)
-            cy = np.array(cal["cy"], dtype=np.float64)
-        else:
-            d = default_gaze_cal(self._screen_w, self._screen_h)
-            cx = np.array(d["cx"], dtype=np.float64)
-            cy = np.array(d["cy"], dtype=np.float64)
-        if len(cx) == 8:
-            hx, hy = FaceMesh().get_head_pose()
-            f = poly_features_pose(rx, ry, hx, hy)
-        else:
-            f = poly_features(rx, ry)
-        return float(f @ cx), float(f @ cy)
+        # The one shared mapping (calibration + head-position
+        # compensation). This used to be a private copy of the
+        # polynomial, so the compensation reached the grids and the
+        # pointer jump but not these arrows.
+        from src import gaze_mapping
+        return gaze_mapping.predict(self._screen_w, self._screen_h)
 
     def _blinking(self):
         if self._blink_grace_s <= 0:

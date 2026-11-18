@@ -97,6 +97,8 @@ class ActionOptionsPopup:
             self._build_pointer_jump_section()
         elif action_id == "gaze_move":
             self._build_gaze_move_section()
+        elif action_id in ("wheel_vh", "wheel_hv"):
+            self._build_wheel_section(action_id[-2:])
         else:
             self._build_coming_soon()
 
@@ -393,7 +395,7 @@ class ActionOptionsPopup:
     def _build_snap_options(self):
         cfg = ConfigManager().config or {}
         self.snap_var = tk.BooleanVar(
-            value=bool(cfg.get("pointer_jump_snap", False)))
+            value=bool(cfg.get("pointer_jump_snap", True)))
         snap_row = customtkinter.CTkFrame(master=self._col,
                                           fg_color="transparent")
         snap_row.pack(padx=20, pady=(18, 4), anchor="w")
@@ -530,6 +532,104 @@ class ActionOptionsPopup:
         if not self._jump_dragging:
             ConfigManager().set_temp_config("pointer_jump_delay_ms", v)
             ConfigManager().apply_config()
+
+    # ---------------------------------------------------------------- #
+    # Wheel rotation (per head axis: amount / speed / sensitivity /
+    # invert / disable)
+    # ---------------------------------------------------------------- #
+
+    def _build_wheel_section(self, kind):
+        from src import wheel_mode
+        for axis, col in (("y", self._col_left), ("x", self._col_right)):
+            horiz, _sign = wheel_mode.target(kind, axis)
+            opts = wheel_mode.options(ConfigManager().config, kind, axis)
+            head = t("Head up/down") if axis == "y" else t("Head left/right")
+            what = (t("Scrolls horizontally") if horiz
+                    else t("Scrolls vertically"))
+            lbl = customtkinter.CTkLabel(master=col,
+                                         text="%s → %s" % (head, what))
+            lbl.cget("font").configure(size=15, weight="bold")
+            lbl.pack(padx=20, pady=(8, 0), anchor="w")
+            self._wheel_slider_row(col, kind, axis, "dz10",
+                                   t("Dead stroke (0.1%)"), opts["dz10"], 1)
+            self._wheel_slider_row(col, kind, axis, "amount",
+                                   t("Scroll amount"), opts["amount"], 10)
+            self._wheel_slider_row(col, kind, axis, "rate",
+                                   t("Rotation speed (per 10 s)"),
+                                   opts["rate"], 1)
+            self._wheel_slider_row(col, kind, axis, "sens",
+                                   t("Acceleration by distance"), opts["sens"],
+                                   1)
+            brow = customtkinter.CTkFrame(master=col, fg_color="transparent")
+            brow.pack(padx=20, pady=(14, 0), anchor="w")
+            for name, text in (("invert", t("Invert")),
+                               ("off", t("Disable"))):
+                var = tk.BooleanVar(value=bool(opts[name]))
+                customtkinter.CTkCheckBox(
+                    brow, text=text, variable=var, onvalue=True,
+                    offvalue=False,
+                    command=lambda n=name, v=var, a=axis: self._wheel_save(
+                        kind, a, n, bool(v.get()))).pack(
+                            side="left", padx=(0, 20))
+
+    def _wheel_save(self, kind, axis, name, value):
+        from src import wheel_mode
+        self._gm_save(wheel_mode.OPTS_KEY, wheel_mode.with_option(
+            ConfigManager().config, kind, axis, name, value))
+
+    def _wheel_slider_row(self, col, kind, axis, name, label, value, step):
+        """Label, slider and typed entry for one numeric wheel option.
+        Saved on release and on a valid typed value."""
+        from src import wheel_mode
+        lo, hi = wheel_mode._LIMITS[name]
+        is_float = name in wheel_mode.FLOAT_OPTS
+
+        def fmt(v):
+            return ("%.1f" % float(v)) if is_float else str(int(round(v)))
+
+        lbl = customtkinter.CTkLabel(master=col, text=label)
+        lbl.cget("font").configure(size=14, weight="bold")
+        lbl.pack(padx=20, pady=(12, 0), anchor="w")
+        row = customtkinter.CTkFrame(master=col, fg_color="transparent")
+        row.pack(padx=20, pady=(6, 0), anchor="w", fill="x")
+        var = tk.StringVar(value=fmt(value))
+        entry = customtkinter.CTkEntry(master=row, textvariable=var, width=80)
+        state = {"drag": False}
+
+        def on_entry(*_a):
+            try:
+                v = (float if is_float else int)(var.get().strip())
+            except ValueError:
+                v = None
+            if v is None or not lo <= v <= hi:
+                entry.configure(fg_color="#ee9e9d")
+                return
+            entry.configure(fg_color="white")
+            slider.set(v)
+            if not state["drag"]:
+                self._wheel_save(kind, axis, name, v)
+
+        def on_drag(v):
+            state["drag"] = True
+            var.trace_vdelete("w", state["trace"])
+            var.set(fmt(wheel_mode.clamp(name, v)))
+            state["trace"] = var.trace("w", on_entry)
+            entry.configure(fg_color="white")
+
+        def on_release(_e):
+            state["drag"] = False
+            self._wheel_save(kind, axis, name, slider.get())
+
+        slider = customtkinter.CTkSlider(
+            master=row, from_=lo, to=hi, width=220,
+            number_of_steps=max(1, int(round((hi - lo) / step))),
+            command=on_drag)
+        slider.bind("<Button-1>", lambda _e: state.update(drag=True))
+        slider.bind("<ButtonRelease-1>", on_release)
+        slider.pack(side="left", padx=(0, 10))
+        slider.set(value)
+        entry.pack(side="left")
+        state["trace"] = var.trace("w", on_entry)
 
     # ---------------------------------------------------------------- #
     # Placeholder for actions without options yet

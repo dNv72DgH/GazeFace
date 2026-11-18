@@ -33,6 +33,7 @@ about two seconds.
 
 import ctypes
 import logging
+import time
 import os
 from ctypes import wintypes
 
@@ -78,6 +79,7 @@ _GA_ROOT = 2
 
 # Active drag: (hwnd, window_left, window_top, cursor_x, cursor_y)
 _state = None
+_since = 0.0               # time.time() the active drag began
 
 
 _HIT_NAMES = {
@@ -164,7 +166,7 @@ def begin(x, y):
     button". False means this is an ordinary drag; the caller proceeds as
     usual.
     """
-    global _state
+    global _state, _since
     hwnd = own_caption_at(x, y, why=True)
     if not hwnd:
         return False
@@ -172,6 +174,7 @@ def begin(x, y):
     if not _u.GetWindowRect(hwnd, ctypes.byref(rc)):
         return False
     _state = (hwnd, rc.left, rc.top, int(x), int(y))
+    _since = time.time()
     logger.info("window drag started on our own caption "
                 "(hwnd=0x%X at %d,%d) — no button pressed, so Windows' "
                 "modal move loop never runs", hwnd, rc.left, rc.top)
@@ -180,6 +183,11 @@ def begin(x, y):
 
 def active() -> bool:
     return _state is not None
+
+
+def since() -> float:
+    """time.time() the active drag began, or 0.0 if none."""
+    return _since if _state is not None else 0.0
 
 
 _moves = 0

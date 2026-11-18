@@ -45,6 +45,50 @@ BUILTIN_HIDDEN = (
                  "Jump List for *", "Jump list for *")])
 
 
+# Option: after switching, put the pointer in the middle of the window.
+POINTER_TO_WINDOW_KEY = "pointer_to_window"
+
+
+def _window_centre(hwnd):
+    """Centre of the window's visible frame (DWM bounds leave out the
+    invisible resize border), physical px; None if unknown."""
+    import ctypes
+    from ctypes import wintypes
+    r = wintypes.RECT()
+    try:
+        if ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(hwnd), 9, ctypes.byref(r),
+                ctypes.sizeof(r)) != 0:
+            raise OSError
+    except Exception:
+        if not ctypes.windll.user32.GetWindowRect(wintypes.HWND(hwnd),
+                                                  ctypes.byref(r)):
+            return None
+    if r.right <= r.left or r.bottom <= r.top:
+        return None
+    return (r.left + r.right) // 2, (r.top + r.bottom) // 2
+
+
+def _focus_and_point(hwnd):
+    """Bring the window forward; with the option on, then move the
+    pointer to its centre (after a restore it has its final size)."""
+    from src.utils.win_focus import focus_window
+    focus_window(hwnd)
+    if not bool(_cfg().get(POINTER_TO_WINDOW_KEY, False)):
+        return
+    try:
+        import time
+        time.sleep(0.15)          # a restored window is still animating
+        c = _window_centre(hwnd)
+        if c is None:
+            return
+        from src.controllers.mouse_controller import MouseController
+        MouseController().warp_pointer(*c)
+        logger.info("pointer moved to the switched window's centre %s", c)
+    except Exception as e:
+        logger.warning("pointer to window failed: %s", e)
+
+
 def builtin_hidden(proc_name, title):
     return any(rule_matches(r, proc_name, title) for r in BUILTIN_HIDDEN)
 
@@ -85,10 +129,16 @@ def rule_matches(rule, proc_name, title):
         # one window ("Inbox") no longer hides every window whose title
         # merely contains those letters. Wildcards (* ? [..]) still work,
         # and they too must cover the WHOLE title.
-        if any(ch in pat for ch in "*?["):
+        # The literal comparison comes first: a title picked from the
+        # window list is stored as-is, and one containing '[' ("Book1
+        # [Read-Only] - Excel") is a character class to fnmatch and so
+        # never matched itself.
+        if (title or "") == pat:
+            pass
+        elif any(ch in pat for ch in "*?["):
             if not fnmatch.fnmatchcase(title or "", pat):
                 return False
-        elif (title or "") != pat:
+        else:
             return False
     return True
 
@@ -420,9 +470,8 @@ class TaskSwitcher:
             # focus_window verifies + escalates — a bare
             # SetForegroundWindow from a background process is routinely
             # rejected, which was the "switch sometimes does nothing" bug.
-            from src.utils.win_focus import focus_window
             import threading
-            threading.Thread(target=focus_window, args=(hwnd,),
+            threading.Thread(target=_focus_and_point, args=(hwnd,),
                              name="TaskSwitchFocus", daemon=True).start()
 
     def close(self):

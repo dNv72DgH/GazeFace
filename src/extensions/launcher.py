@@ -485,6 +485,11 @@ class Launcher:
                 self._paste_text(str(s["text"]))
             elif "mouse" in s:
                 self._macro_click(str(s["mouse"]))
+            elif "wheelmode" in s:
+                # Starts once the launcher has closed; runs until a
+                # gesture ends it (src/wheel_mode.py).
+                from src.controllers.mouse_controller import MouseController
+                MouseController().begin_wheel_mode(str(s["wheelmode"]))
             elif "wheel" in s:
                 self._macro_wheel(s)
             elif "drag" in s:

@@ -11,34 +11,43 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Fullscreen 9-point gaze calibration overlay.
+"""Fullscreen gaze calibration overlay.
 
-Uses gaze-mouse's calibration method:
+* 16 targets (4x4 grid) or, with "8 points" in Advanced settings, the 8
+  of them in a checkerboard pattern; each is shown for 2 s and samples
+  are taken after a 0.7 s settle period that skips the saccade to the
+  target.
+* Every sample records the gaze ratio (iris centre offset from the
+  eye-corner midpoint, normalised by eye width - FaceMesh.gaze_ratio),
+  whether the eyes were blinking, and where the eyes were in space.
+* Each target is reduced to ONE point: the median of its samples, blink
+  frames left out. A blink throws the iris landmarks for a few frames;
+  as plain samples those frames pulled a target's fit by a hundred
+  pixels or more, as part of a median they do nothing.
+* gaze_mapping.fit_points fits two 6-coefficient polynomials
+  ``x = cx @ [1, rx, ry, rx*ry, rx^2, ry^2]`` (likewise y) through the
+  points, with the head position term (src/head_shift.py) taken out of
+  each target first.
+* cx/cy, the points and the reference eye position are saved to the
+  active profile's ``cursor.json`` under ``gaze_calibration``.
+* The raw samples go to ``gaze_cal_log.jsonl`` in the user data folder
+  (numbers only, never images; the last few calibrations are kept), so
+  the mapping can be studied on real data.
 
-* 9 target points (3x3 grid). Each is shown for ~1.8s and samples are
-  collected after a ~0.7s settle period to skip the saccade-to-target.
-* For every sample we record (rx, ry, target_screen_x, target_screen_y),
-  where (rx, ry) is FaceMesh.gaze_ratio in gaze-mouse's units (iris
-  centre offset from eye-corner midpoint, normalised by eye width).
-* We fit two 6-coefficient polynomial regressions
-  ``x = cx @ [1, rx, ry, rx*ry, rx^2, ry^2]`` and likewise for y, via
-  numpy.linalg.lstsq.
-* The resulting cx/cy arrays are saved to the active profile's
-  ``cursor.json`` under the ``gaze_calibration`` key.
-
-MouseController._gaze_tick reads those coefficients and applies them
-each tick to produce the absolute screen position.
+Every gaze consumer reads the result through gaze_mapping.predict().
 """
 
+import json
 import logging
+import time
 import tkinter as tk
 
 import numpy as np
 import pyautogui
 
+from src import paths
 from src.config_manager import ConfigManager
 from src.detectors import FaceMesh
-from src.detectors.facemesh import poly_features
 from src.i18n import t
 
 logger = logging.getLogger("GazeCalibrator")
@@ -79,12 +88,41 @@ POINTS_16 = [
     for fx in (0.08, 0.36, 0.64, 0.92)
 ]
 
-# Per-point timing (ms). 3 s display with 0.7 s settle = 2.3 s of
-# sampling per point. Across 16 points that's ~37 s total and gives
-# the lstsq fit roughly 70 independent samples per point at 30 fps —
-# plenty of redundancy for outlier rejection.
-DURATION_MS = 3000
+# Quick mode: every other target of the 4x4 grid, in a checkerboard
+# pattern, so each row and column still has two targets. Fitted on its
+# own (no earlier calibration needed): on the logged calibrations it
+# predicted the 8 left-out targets about as well as a 16-point fit did
+# (~230 px median on 4K), whereas correcting an older fit with 4 points
+# stayed ~100 px worse.
+POINTS_8 = [POINTS_16[i] for i in (0, 2, 5, 7, 8, 10, 13, 15)]
+
+# Advanced settings > Calibration > Number of points (app-wide).
+POINTS_KEY = "calibration_points"
+POINT_CHOICES = (16, 8)
+
+
+def point_count() -> int:
+    try:
+        n = int(ConfigManager()._read_app_setting(POINTS_KEY, 16))
+    except Exception:
+        n = 16
+    return n if n in POINT_CHOICES else 16
+
+
+def _points_for(n):
+    return POINTS_8 if n == 8 else POINTS_16
+
+# Per-point timing (ms). 2 s display with 0.7 s settle = 1.3 s of
+# sampling per point (~30 samples at the 40 ms tick). Across 16 points
+# that's ~36 s total including the intro, ~20 s with 8.
+DURATION_MS = 2000
 SAMPLE_AFTER_MS = 700
+
+# The dot shrinks from DOT_R_START to DOT_R_END (px) over DURATION_MS:
+# it shows how long is left and draws the eye to its centre.
+DOT_R_START = 22
+DOT_R_END = 5
+SHRINK_TICK_MS = 30
 
 # The app's own UI font (bundled, registered at startup by
 # utils.install_font). "Helvetica" is not a Windows font, so Tk fell back
@@ -103,12 +141,28 @@ SAMPLE_TICK_MS = 40
 # NOTE: calibration deliberately asks the user to move NOTHING but their
 # eyes. A head-movement phase was prototyped (it is what a 3D-ray mapping
 # needs to become head-position invariant) and dropped: many users of this
-# app have limited neck mobility and cannot perform it. Drift from head
-# movement is handled afterwards by src/gaze_online_cal.py instead, which
-# learns it from ordinary use.
+# app have limited neck mobility and cannot perform it. A change of seat
+# is handled by src/head_shift.py instead: the eye position is recorded
+# here and the prediction is shifted by how far it has moved since.
 
 # Minimum samples across all points to consider the fit valid.
 MIN_SAMPLES = 20
+# A target with fewer usable samples than this is left out of the fit.
+MIN_DOT_SAMPLES = 8
+
+# Diagnostics: the raw samples of the last few calibrations (app-wide
+# setting, on by default; numbers only).
+LOG_KEY = "gaze_cal_log"
+LOG_FILE = "gaze_cal_log.jsonl"
+LOG_KEEP = 20
+LOG_COLUMNS = (
+    ["ms", "dot", "tx", "ty", "rx", "ry", "blink",
+     "rx_r", "ry_r", "w_r", "rx_l", "ry_l", "w_l"]
+    # Blendshapes 9-18: eyeBlink L/R, eyeLookDown L/R, eyeLookIn L/R,
+    # eyeLookOut L/R, eyeLookUp L/R.
+    + ["bs%d" % i for i in range(9, 19)]
+    # Rows 0-2 of the facial transformation matrix (rotation | position).
+    + ["m%d%d" % (r, c) for r in range(3) for c in range(4)])
 
 
 class GazeCalibrator:
@@ -165,11 +219,13 @@ class GazeCalibrator:
         self.canvas = None
         self.dot = None
         self.idx = -1
-        # Collected list of (feature_row, target_x_px, target_y_px).
+        # One dict per sample: dot, tx, ty, rx, ry, blink, eye, log.
         self.samples = []
+        self._t0 = time.monotonic()
         self._after_ids = []
         self._screen_w = 0
         self._screen_h = 0
+        self._points = POINTS_16
 
     # ---------------------------------------------------------------- #
     # Lifecycle
@@ -256,6 +312,7 @@ class GazeCalibrator:
         # likewise targets physical pixels). pyautogui handles DPI on
         # Windows after SetProcessDPIAware (called from MouseController).
         self._screen_w, self._screen_h = pyautogui.size()
+        self._points = _points_for(point_count())
 
         self.top = tk.Toplevel(self.master)
         self.top.attributes("-fullscreen", True)
@@ -339,40 +396,73 @@ class GazeCalibrator:
             self.prompt_label = None
 
         self.idx += 1
-        if self.idx >= len(POINTS_16):
+        if self.idx >= len(self._points):
             self._finish()
             return
 
-        fx, fy = POINTS_16[self.idx]
+        fx, fy = self._points[self.idx]
         tx = int(fx * self._screen_w)
         ty = int(fy * self._screen_h)
 
         if self.dot is not None:
             self.canvas.delete(self.dot)
-        r = 18
+        r = DOT_R_START
         self.dot = self.canvas.create_oval(tx - r, ty - r, tx + r, ty + r,
                                            fill="#34A853", outline="white",
                                            width=2)
+        self._shrink(self.dot, tx, ty, time.monotonic())
 
         # Settle, then sample.
         self._after_ids.append(
             self.top.after(SAMPLE_AFTER_MS,
                            lambda: self._sample_tick(0, tx, ty)))
 
+    def _shrink(self, dot, tx, ty, t0):
+        """Shrink the current dot over DURATION_MS; stops when the dot
+        is replaced or the run ends."""
+        self._shrink_after = None
+        if self.canvas is None or dot is not self.dot:
+            return
+        f = min(1.0, (time.monotonic() - t0) * 1000.0 / DURATION_MS)
+        r = DOT_R_START + (DOT_R_END - DOT_R_START) * f
+        try:
+            self.canvas.coords(dot, tx - r, ty - r, tx + r, ty + r)
+        except Exception:
+            return
+        if f < 1.0:
+            self._shrink_after = self.top.after(
+                SHRINK_TICK_MS, lambda: self._shrink(dot, tx, ty, t0))
+
     def _sample_once(self, tx, ty):
-        """Capture one (feature_row, target_x, target_y) sample."""
-        ratio = FaceMesh().get_gaze_ratio()
+        """Capture one sample for the target at (tx, ty)."""
+        fm = FaceMesh()
+        ratio = fm.get_gaze_ratio()
         if ratio is None:
             return
         rx, ry = ratio
-        # Head pose is intentionally NOT captured. A still-head
-        # calibration leaves the head-pose columns nearly constant, which
-        # makes the lstsq fit ill-conditioned and produces huge spurious
-        # head-pose coefficients — small head movements at runtime then
-        # throw the cursor way off-target. Head-movement drift is handled
-        # after the fact by the implicit re-calibration instead.
-        self.samples.append((poly_features(rx, ry),
-                             float(tx), float(ty)))
+        from src import head_shift
+        M = head_shift.pose_matrix()
+        try:
+            blink = bool(fm.is_blinking())
+        except Exception:
+            blink = False
+        ms = int((time.monotonic() - self._t0) * 1000)
+        row = [ms, self.idx, int(tx), int(ty), round(rx, 5), round(ry, 5),
+               int(blink)]
+        try:
+            eyes = fm.get_eye_ratios()
+            for e in eyes or ((0, 0, 0), (0, 0, 0)):
+                row += [round(e[0], 5), round(e[1], 5), round(e[2], 2)]
+            bs = fm.blendshapes_buffer[-1]
+            row += [round(float(v), 3) for v in bs[9:19]]
+            row += ([round(float(v), 4) for v in M[:3, :].ravel()]
+                    if M is not None else [0.0] * 12)
+        except Exception:
+            pass
+        self.samples.append({
+            "dot": self.idx, "tx": float(tx), "ty": float(ty),
+            "rx": float(rx), "ry": float(ry), "blink": blink,
+            "eye": head_shift.eye_position(M), "log": row})
 
     def _sample_tick(self, elapsed_ms, tx, ty):
         if self.canvas is None:
@@ -393,40 +483,82 @@ class GazeCalibrator:
     # Fit + save
     # ---------------------------------------------------------------- #
 
+    def _fail(self, why, *args):
+        logger.warning("Calibration " + why + "; aborting", *args)
+        self._teardown()
+        if self.on_complete is not None:
+            try:
+                self.on_complete(False)
+            except Exception:
+                pass
+
+    def _dot_points(self):
+        """One point per target: [tx, ty, rx, ry] plus [ex, ey, ez] when
+        the eye position was seen - medians over the target's samples,
+        blink frames left out (unless that leaves too few)."""
+        by_dot = {}
+        for smp in self.samples:
+            by_dot.setdefault(smp["dot"], []).append(smp)
+        pts = []
+        for dot in sorted(by_dot):
+            ss = by_dot[dot]
+            good = [x for x in ss if not x["blink"]]
+            if len(good) < MIN_DOT_SAMPLES:
+                good = ss
+            if len(good) < MIN_DOT_SAMPLES:
+                logger.warning("Calibration target %d: only %d samples, "
+                               "left out", dot, len(good))
+                continue
+            p = [good[0]["tx"], good[0]["ty"],
+                 float(np.median([x["rx"] for x in good])),
+                 float(np.median([x["ry"] for x in good]))]
+            eyes = [x["eye"] for x in good if x["eye"] is not None]
+            if len(eyes) * 2 >= len(good):
+                p += [float(v) for v in np.median(np.array(eyes), axis=0)]
+            pts.append(p)
+        return pts
+
     def _finish(self):
         if len(self.samples) < MIN_SAMPLES:
-            logger.warning("Calibration captured too few samples (%d); "
-                           "aborting", len(self.samples))
-            self._teardown()
-            if self.on_complete is not None:
-                try:
-                    self.on_complete(False)
-                except Exception:
-                    pass
+            self._fail("captured too few samples (%d)", len(self.samples))
             return
 
-        # Samples are (feature_row, target_x, target_y).
-        from src import gaze_mapping
-        X = np.stack([s[0] for s in self.samples]).astype(np.float64)
-        tx_arr = np.array([s[1] for s in self.samples], dtype=np.float64)
-        ty_arr = np.array([s[2] for s in self.samples], dtype=np.float64)
-
-        cx, *_ = np.linalg.lstsq(X, tx_arr, rcond=None)
-        cy, *_ = np.linalg.lstsq(X, ty_arr, rcond=None)
-
-        pred_x = X @ cx
-        pred_y = X @ cy
-        rmse_x = float(np.sqrt(np.mean((pred_x - tx_arr) ** 2)))
-        rmse_y = float(np.sqrt(np.mean((pred_y - ty_arr) ** 2)))
-        logger.info("Gaze calibration: %d samples, %d features, "
-                    "RMSE x=%dpx y=%dpx",
-                    len(self.samples), X.shape[1],
+        from src import gaze_mapping, head_shift
+        pts = self._dot_points()
+        eyes = [x["eye"] for x in self.samples
+                if x["eye"] is not None and not x["blink"]]
+        eye_ref = (np.median(np.array(eyes), axis=0)
+                   if len(eyes) >= MIN_SAMPLES else None)
+        # 16 targets: at least 10 usable. 8 targets: at most one lost.
+        need = min(gaze_mapping.MIN_POINTS, len(self._points) - 1)
+        res = gaze_mapping.fit_points(pts, eye_ref,
+                                      self._screen_w, self._screen_h,
+                                      min_points=need)
+        if res is None:
+            self._fail("has too few usable targets (%d of %d)",
+                       len(pts), len(self._points))
+            return
+        cx, cy, rmse_x, rmse_y = res
+        blinks = sum(1 for x in self.samples if x["blink"])
+        logger.info("Gaze calibration: %d samples (%d in blinks), %d of "
+                    "%d targets, RMSE x=%dpx y=%dpx (per target)",
+                    len(self.samples), blinks, len(pts), len(self._points),
                     int(rmse_x), int(rmse_y))
 
-        ConfigManager().set_temp_config(
-            gaze_mapping.CAL_KEY,
-            {"cx": cx.tolist(), "cy": cy.tolist()})
+        cal = {"cx": cx.tolist(), "cy": cy.tolist(),
+               head_shift.SCREEN_KEY: [int(self._screen_w),
+                                       int(self._screen_h)],
+               head_shift.PTS_KEY: [
+                   [int(p[0]), int(p[1]), round(p[2], 5), round(p[3], 5)]
+                   + [round(v, 2) for v in p[4:7]] for p in pts]}
+        if eye_ref is not None:
+            cal[head_shift.REF_KEY] = [round(float(v), 2) for v in eye_ref]
+            logger.info("Gaze calibration eye position: x=%.1f y=%.1f "
+                        "z=%.1f cm; head term %s", eye_ref[0], eye_ref[1],
+                        eye_ref[2], ("off" if head_shift.DISABLED else head_shift.params()))
+        ConfigManager().set_temp_config(gaze_mapping.CAL_KEY, cal)
         ConfigManager().apply_config()
+        self._write_log(cal, rmse_x, rmse_y)
 
         # A fresh explicit calibration supersedes whatever drift the
         # implicit re-calibration had accumulated against the OLD mapping.
@@ -442,6 +574,35 @@ class GazeCalibrator:
                 self.on_complete(True)
             except Exception as e:
                 logger.error("on_complete callback failed: %s", e)
+
+    def _write_log(self, cal, rmse_x, rmse_y):
+        """Append this calibration's raw samples to the diagnostics log,
+        keeping the last LOG_KEEP calibrations."""
+        try:
+            if not ConfigManager()._read_app_setting(LOG_KEY, True):
+                return
+            from src import config_manager, head_shift
+            entry = dict(cal)
+            entry.update({
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "version": getattr(config_manager, "VERSION", ""),
+                "monitor_cm": head_shift.monitor_cm(),
+                "head_term": ("off" if head_shift.DISABLED else head_shift.params()),
+                "rmse": [round(rmse_x, 1), round(rmse_y, 1)],
+                "columns": LOG_COLUMNS,
+                "samples": [x["log"] for x in self.samples]})
+            path = paths.user_data_dir() / LOG_FILE
+            lines = []
+            if path.exists():
+                with open(path, encoding="utf-8") as f:
+                    lines = [ln for ln in f.read().splitlines() if ln]
+            lines.append(json.dumps(entry, separators=(",", ":")))
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(chr(10).join(lines[-LOG_KEEP:]) + chr(10))
+            tmp.replace(path)
+        except Exception as e:
+            logger.error("calibration log write failed: %s", e)
 
     def cancel(self):
         logger.info("Calibration cancelled by user")
@@ -459,12 +620,15 @@ class GazeCalibrator:
                 or GazeCalibrator._running_inst is self:
             GazeCalibrator._running = False
             GazeCalibrator._running_inst = None
-        for aid in self._after_ids:
+        for aid in self._after_ids + [getattr(self, "_shrink_after", None)]:
+            if aid is None:
+                continue
             try:
                 self.top.after_cancel(aid)
             except Exception:
                 pass
         self._after_ids = []
+        self._shrink_after = None
         if self.top is not None:
             try:
                 self.top.destroy()

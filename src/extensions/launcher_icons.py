@@ -20,6 +20,8 @@ later."""
 import ctypes
 import logging
 import os
+import threading
+import time
 from ctypes import wintypes
 
 from src import paths
@@ -550,7 +552,7 @@ def icon_for_item(item):
     stored = item.get("icon")
     if item.get("type") == "file" and item.get("path"):
         if not stored or str(stored).startswith("file_"):
-            live = extract_file_icon(item["path"])
+            live = _live_file_icon(item["path"])
             if live:
                 return live
             # Target unreadable right now (removed drive, deleted file):
@@ -558,6 +560,68 @@ def icon_for_item(item):
             # the cell does not go blank.
             return resolve_icon(stored) or icon_for_type("file")
     return resolve_icon(stored)
+
+
+# --- targets that can block ------------------------------------------- #
+#
+# icon_for_item runs on the tk main thread every time the launcher opens
+# or turns a page - the thread that also runs head tracking. Asking a
+# disconnected network share whether a file exists can take tens of
+# seconds, and it froze the pointer on every open. For a target on a
+# network drive or UNC path the reachability check runs on a worker
+# thread instead; the launcher shows what the last check found (or the
+# stored snapshot before the first one finishes).
+
+_DRIVE_REMOTE = 4
+_SLOW_RECHECK_S = 5.0
+_slow_lock = threading.Lock()
+_slow_seen = {}          # path -> True (reachable) / False
+_slow_checked = {}       # path -> time.monotonic() of the last check
+_slow_busy = set()
+
+
+def _is_slow_path(path):
+    p = os.path.normpath(str(path))
+    if p.startswith("\\\\"):
+        return True
+    drive = os.path.splitdrive(p)[0]
+    if not drive:
+        return False
+    try:
+        return ctypes.windll.kernel32.GetDriveTypeW(
+            drive + "\\") == _DRIVE_REMOTE
+    except Exception:
+        return False
+
+
+def _slow_check(path):
+    try:
+        ok = os.path.exists(path)
+    except Exception:
+        ok = False
+    with _slow_lock:
+        _slow_seen[path] = ok
+        _slow_checked[path] = time.monotonic()
+        _slow_busy.discard(path)
+
+
+def _live_file_icon(path):
+    """extract_file_icon, without ever waiting on a network target."""
+    if not _is_slow_path(path):
+        return extract_file_icon(path)
+    with _slow_lock:
+        seen = _slow_seen.get(path)
+        due = (path not in _slow_busy and time.monotonic()
+               - _slow_checked.get(path, -1e9) >= _SLOW_RECHECK_S)
+        if due:
+            _slow_busy.add(path)
+    if due:
+        threading.Thread(target=_slow_check, args=(path,),
+                         name="launcher-icon-check", daemon=True).start()
+    # Reachable a moment ago: the extraction below is normally just a
+    # cache hit. Unknown or unreachable: the caller falls back to the
+    # stored snapshot.
+    return extract_file_icon(path) if seen else None
 
 
 def extract_file_icon(path):

@@ -72,7 +72,8 @@ def split_binding(key_action):
     """"ctrl+shift+t" -> (["ctrl", "shift"], "t")."""
     if not key_action or key_action == "None":
         return [], "None"
-    parts = [p for p in str(key_action).split("+") if p]
+    from src.controllers.keybinder import split_combo
+    parts = split_combo(key_action)     # keeps a '+' base key
     if not parts:
         return [], "None"
     mods = [p for p in parts[:-1] if p in MODIFIER_KEYS]

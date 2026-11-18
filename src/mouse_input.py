@@ -190,6 +190,20 @@ def wheel(direction, notches=1):
     return ok
 
 
+def wheel_delta(horizontal, delta):
+    """One wheel event of `delta` (120 = one notch; + is up / right).
+    Used by the wheel rotation mode, whose amount need not be a whole
+    notch."""
+    try:
+        d = int(delta)
+    except (TypeError, ValueError):
+        return False
+    if d == 0:
+        return False
+    flag = MOUSEEVENTF_HWHEEL if horizontal else MOUSEEVENTF_WHEEL
+    return _send(flag, data=d & 0xFFFFFFFF)
+
+
 # --- drag (a button held across macro steps) --------------------------- #
 #
 # "Drag" is not one action but a mode: the button goes down and STAYS
@@ -206,7 +220,10 @@ _held_since = 0.0       # time.time() the hold began, for the stuck-input
 
 
 def is_dragging():
-    return _held is not None
+    # A drag that began on our own title bar holds no button (see
+    # src/window_drag.py) but is a drag all the same: a click must drop
+    # it, or the window stays glued to the pointer.
+    return _held is not None or window_drag.active()
 
 
 def held_button():
@@ -214,8 +231,11 @@ def held_button():
 
 
 def held_since():
-    """time.time() the current drag started, or 0.0 if none."""
-    return _held_since if _held is not None else 0.0
+    """time.time() the current drag started, or 0.0 if none. Covers a
+    window drag too, so the stuck-input janitor times it out as well."""
+    if _held is not None:
+        return _held_since
+    return window_drag.since()
 
 
 def drag_start(btn):

@@ -85,6 +85,8 @@ available_actions = {
     "Mouse pause / unpause": ["mouse", "pause"],
     "Gaze Jump": ["mouse", "pointer_jump"],
     "Gaze move": ["mouse", "gaze_move"],
+    "Wheel rotation mode (up/down, left/right)": ["mouse", "wheel_vh"],
+    "Wheel rotation mode (left/right, up/down)": ["mouse", "wheel_hv"],
     "Gaze launcher": ["mouse", "gaze_launcher"],
     "Gaze clipboard history": ["mouse", "gaze_clipboard"],
     "Gaze task switcher": ["mouse", "gaze_taskswitch"],

@@ -40,6 +40,13 @@ full recursive least-squares refit of all six polynomial coefficients:
 The correction is stored SEPARATELY from the user's calibration
 (`gaze_bias`, not `gaze_calibration`), so an explicit recalibration is
 never overwritten and resetting is a matter of clearing one key.
+
+OFF by default. A user who sees the cursor drift compensates by looking
+deliberately off-target until the cursor sits on the cell they want, so
+the cell they execute is where the CURSOR was, not where the eye really
+pointed - the residual measured here is near zero however large the real
+error, and the fixation window can even pull it the wrong way. Head
+movement is handled by src/head_shift.py instead.
 """
 
 import logging
@@ -80,11 +87,11 @@ _since_save = 0
 
 
 def enabled() -> bool:
-    try:
-        return bool((ConfigManager().config or {}).get(
-            "gaze_online_cal_enabled", True))
-    except Exception:
-        return True
+    # Disabled and hidden from the UI: in use it never learned a useful
+    # correction (see the module docstring). A saved
+    # gaze_online_cal_enabled=True from an older version is ignored, so a
+    # previously learned gaze_bias is not applied either.
+    return False
 
 
 def _profile_key():
